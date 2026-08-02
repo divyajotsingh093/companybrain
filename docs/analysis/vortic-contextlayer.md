@@ -5,7 +5,7 @@ at `9e92a08`, read on 2026-08-02. Next.js 16 App Router, React 19, Vercel AI SDK
 for model access, Supabase (Postgres + pgvector + Auth + RLS + Vault), MCP over the official SDK.
 
 Vortic sells "the model-agnostic backend for conversation-over-MCP apps": point a chat box at a
-*box* of MCP servers, declare high-level **actions** (a name plus an input/output contract), and
+_box_ of MCP servers, declare high-level **actions** (a name plus an input/output contract), and
 the model decides how while ContextLayer does the wiring — calls, context, sessions, secrets,
 traces.
 
@@ -23,7 +23,7 @@ function.
 Two columns carry embeddings, and which two is the whole point:
 
 - `mcp_tools.embedding vector(1536)`, with `create index on mcp_tools using hnsw (embedding
-  vector_cosine_ops)` — used to embed the user's intent and retrieve the top-K *tools*, so a
+vector_cosine_ops)` — used to embed the user's intent and retrieve the top-K _tools_, so a
   thousand tool definitions never enter the model's context.
 - `context_store.embedding vector(1536)` — per-box knowledge, but shaped as a keyed KV store
   (`unique (box_id, key)`), not a chunked document corpus.

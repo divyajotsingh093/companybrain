@@ -41,7 +41,7 @@ that machinery already.
 **The ACL grant store.** `src/acl/acl-store.ts` models access as grants —
 `{ ownerScopeId, ref, granteeScopeId, permission }` — with audience-based lookup
 (`handlesForAudience`) and compare-and-swap replacement. `src/reach/reach.ts` decides who the
-agent may contact. Note the boundary carefully: this governs *qm's own* resources — skills,
+agent may contact. Note the boundary carefully: this governs _qm's own_ resources — skills,
 files, shared handles. It does not model Google Drive's sharing lists or Confluence space
 permissions. We need that second thing, and it's ours to build.
 
@@ -82,7 +82,7 @@ qm has no organizational knowledge layer, and it isn't pretending to. Its memory
 
 - `src/memory/memory-service.ts` stores one markdown file per scope, `memory/MEMORY.md`.
 - `MAX_FACTS = 300`. Older bullets are dropped when the cap is exceeded.
-- `RECALL_MAX_CHARS = 6_000`, and recall takes the *tail* of the file.
+- `RECALL_MAX_CHARS = 6_000`, and recall takes the _tail_ of the file.
 - `query()` is `queryBullets()`: lowercase the query, split on whitespace, and keep bullet lines
   containing every term as a literal substring. No ranking, no synonyms, no embeddings.
 

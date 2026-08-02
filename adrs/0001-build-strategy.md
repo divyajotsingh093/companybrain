@@ -4,7 +4,7 @@
 - **Date:** 2026-08-02
 
 > This ADR recommended against forking qm. The repository was forked from qm the same day. The
-> reasoning below is preserved as written, including the LOC figure in *Context*, which counted
+> reasoning below is preserved as written, including the LOC figure in _Context_, which counted
 > only `src/` and missed roughly 43k lines of plugin and UI code — the omission that most directly
 > undercut the recommendation. ADR-0003 records what changed.
 
@@ -23,7 +23,7 @@ So the question isn't whether to use qm. It's how tightly to couple to it.
 ## Decision
 
 Build the knowledge service as a standalone codebase in this repository, exposing HTTP and MCP,
-and deploy it *into* qm as a connector. Do not fork qm.
+and deploy it _into_ qm as a connector. Do not fork qm.
 
 ## Why
 

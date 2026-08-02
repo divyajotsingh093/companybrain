@@ -15,7 +15,7 @@ per-file sharing lists plus domain-wide and public links. Slack has channel memb
 channels and DMs. GitHub has repo visibility and team permissions. Confluence has space and page
 restrictions. None of them is expressible in the others' terms.
 
-qm's `src/acl/acl-store.ts` models grants over *qm's own* resources — skills, files, shared
+qm's `src/acl/acl-store.ts` models grants over _qm's own_ resources — skills, files, shared
 handles. It does not mirror source-system permissions, and shouldn't. That mirror is ours.
 
 ## Decision
@@ -66,7 +66,7 @@ Accepted:
 - **Permission drift is real between syncs.** Mitigated by re-verification of top hits, bounded by
   sync frequency, and never fully solved. The residual window should be documented, not hidden.
 - **The query is more expensive.** A covering index on `document_acl (document_id, grantee_kind,
-  grantee_id)` is not optional.
+grantee_id)` is not optional.
 
 ## Alternatives considered
 

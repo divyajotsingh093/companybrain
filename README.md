@@ -43,7 +43,7 @@ The gap is the thing worth building. qm's memory is a single markdown file per s
 matching over bullet lines. It does have real full-text search, but over one source only: cached
 Slack messages, via a `tsvector` column and a GIN index in `src/surface-cache/surface-cache.ts`.
 There are no embeddings anywhere in it. A notebook plus a Slack index is not a company's
-knowledge. Vortic, meanwhile, *does* run pgvector with HNSW cosine indexes — over
+knowledge. Vortic, meanwhile, _does_ run pgvector with HNSW cosine indexes — over
 `mcp_tools.embedding`, to choose which tools to show the model. Right technique, different target.
 
 Neither project has an organizational knowledge layer. That's our half.
@@ -87,16 +87,16 @@ embeddings, and its ACL grants are authored rather than mirrored from source sys
 
 ## Repository map
 
-| Path | What's in it |
-|---|---|
-| [`ROADMAP.md`](./ROADMAP.md) | Horizons H0–H3, principles, and the anti-roadmap |
-| [`docs/architecture.md`](./docs/architecture.md) | Target architecture and how it attaches to qm |
-| [`docs/analysis/qm.md`](./docs/analysis/qm.md) | What qm gives us, what it doesn't |
-| [`docs/analysis/vortic-contextlayer.md`](./docs/analysis/vortic-contextlayer.md) | What to copy from Vortic, and what to leave |
-| [`adrs/`](./adrs/) | Decisions, with their consequences and reversal paths |
-| [`NOTICE`](./NOTICE) | What was inherited from qm, at which commit, and what wasn't |
-| [`README.qm.md`](./README.qm.md) | qm's own README, preserved as it was upstream |
-| `src/`, `plugins/`, `cli/`, `test/` | Inherited from qm; see `NOTICE` |
+| Path                                                                             | What's in it                                                 |
+| -------------------------------------------------------------------------------- | ------------------------------------------------------------ |
+| [`ROADMAP.md`](./ROADMAP.md)                                                     | Horizons H0–H3, principles, and the anti-roadmap             |
+| [`docs/architecture.md`](./docs/architecture.md)                                 | Target architecture and how it attaches to qm                |
+| [`docs/analysis/qm.md`](./docs/analysis/qm.md)                                   | What qm gives us, what it doesn't                            |
+| [`docs/analysis/vortic-contextlayer.md`](./docs/analysis/vortic-contextlayer.md) | What to copy from Vortic, and what to leave                  |
+| [`adrs/`](./adrs/)                                                               | Decisions, with their consequences and reversal paths        |
+| [`NOTICE`](./NOTICE)                                                             | What was inherited from qm, at which commit, and what wasn't |
+| [`README.qm.md`](./README.qm.md)                                                 | qm's own README, preserved as it was upstream                |
+| `src/`, `plugins/`, `cli/`, `test/`                                              | Inherited from qm; see `NOTICE`                              |
 
 ## Status
 

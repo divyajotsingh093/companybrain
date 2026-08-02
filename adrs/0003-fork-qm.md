@@ -14,12 +14,12 @@ rest was qm's own product surface with no value to us.
 
 The survey missed the `plugins/` tree entirely. qm also ships:
 
-| | |
-|---|---|
+|                  |                                                                                        |
+| ---------------- | -------------------------------------------------------------------------------------- |
 | `plugins/web-ui` | ~31k LOC — chat shell on Lit 3 and Vite, panel layout via dockview, sanitized markdown |
-| `plugins/admin` | a 14,144-line single-file admin console, no framework, no build step |
-| `plugins/portal` | ~4k LOC — OIDC session proxy |
-| `plugins/auth` | ~2.6k LOC — magic-link email authentication |
+| `plugins/admin`  | a 14,144-line single-file admin console, no framework, no build step                   |
+| `plugins/portal` | ~4k LOC — OIDC session proxy                                                           |
+| `plugins/auth`   | ~2.6k LOC — magic-link email authentication                                            |
 
 Application code is ~117k lines, not 75k. The missing ~43k is almost entirely user-facing surface:
 the part a standalone service would have had to build from nothing, and the part least related to
@@ -40,7 +40,7 @@ Discipline about that boundary is a code review concern, not an architecture one
 
 **"The same brain should serve Claude Code and Cursor."** Still true, and still the plan — the
 knowledge layer stays addressable over MCP. Forking the harness does not stop us exposing a
-service; it just means we are not *only* a service.
+service; it just means we are not _only_ a service.
 
 **"We inherit little enough that a fork mostly means deleting."** This was the load-bearing claim
 and it was an artifact of the incomplete survey. A fork inherits a working UI, an admin console, an
@@ -59,8 +59,8 @@ auth surface and a session proxy, plus CI that typechecks, lints and tests all o
 ## What has not changed
 
 [ADR-0002](./0002-permission-model.md) stands unmodified. Permission-scoped retrieval is still the
-wedge and still greenfield: qm has no embeddings, and its ACL grants are *authored* — a record of
-what someone shared inside qm — rather than *mirrored* from the source system's own permissions.
+wedge and still greenfield: qm has no embeddings, and its ACL grants are _authored_ — a record of
+what someone shared inside qm — rather than _mirrored_ from the source system's own permissions.
 `src/acl/postgres-grant-store.ts` also loads every grant into memory and filters in JavaScript,
 which is correct for a few thousand hand-authored shares and wrong for mirrored ACLs over millions
 of chunks. The fork gives us more infrastructure. It gives us nothing on the hard part.
