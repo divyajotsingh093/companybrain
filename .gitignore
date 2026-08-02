@@ -3,10 +3,20 @@ dist/
 build/
 coverage/
 *.tsbuildinfo
+.generated/
+
+data/
+local/data/
 
 .env
 .env.*
 !.env.example
+*.env
+*.env.local
+
+*.tfstate
+*.tfstate.*
+.terraform/
 
 *.log
 npm-debug.log*
@@ -14,3 +24,13 @@ npm-debug.log*
 .DS_Store
 .idea/
 .vscode/
+.claude/settings.local.json
+.gstack/
+.ci-instance/
+.context/
+
+test/live-slack/out/
+docs/master.html
+
+__pycache__/
+*.pyc

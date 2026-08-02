@@ -1,0 +1,41 @@
+# Provenance
+
+Company Brain is derived from **qm** (`divyajotsingh093/qm`), copied at:
+
+    commit 7f2c916360f1797a8ff2a77ce2ce40c5fabab087
+    dated  2026-07-31 10:55:39 -0700
+    branch main
+
+Everything outside the files listed below arrived from that commit and carries
+qm's history, not this repository's. qm is MIT licensed (Copyright (c) 2026 QM
+contributors); this repository is MIT licensed (Copyright (c) 2026 Divyajot
+Singh). Both licenses permit the copy, and the same person owns both.
+
+## Authored here, not inherited
+
+    README.md                             the Company Brain thesis
+    ROADMAP.md                            H0-H3 horizons and the anti-roadmap
+    docs/architecture.md
+    docs/analysis/qm.md                   what qm gives us and what it doesn't
+    docs/analysis/vortic-contextlayer.md
+    adrs/0001-build-strategy.md
+    adrs/0002-permission-model.md
+    NOTICE                                this file
+
+qm's own README is preserved as `README.qm.md`. Its ADR directory was empty
+apart from a `.gitkeep`, so `adrs/` holds only Company Brain decisions.
+
+## Re-syncing with upstream
+
+The copy was taken from a working tree, so this repository shares no commits
+with qm and `git merge` against it will not work without grafting. To compare
+against upstream, clone qm separately and diff trees at the SHA above.
+
+## What this copy does not yet include
+
+`npm install` was run in the source tree before copying, so `package-lock.json`
+may differ from qm's committed lock. Node modules were excluded.
+
+`plugins/web-ui` has its own manifest and its dependencies are not vendored; one
+of them (`xlsx`, fetched from cdn.sheetjs.com rather than the npm registry)
+cannot be installed from behind a restricted egress proxy.
