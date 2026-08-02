@@ -1,0 +1,48 @@
+# Provenance
+
+Company Brain is built on **qm** (`divyajotsingh093/qm`). This repository's `main`
+is qm's history through:
+
+    commit 7f2c916360f1797a8ff2a77ce2ce40c5fabab087
+    dated  2026-07-31 10:55:39 -0700
+
+Everything outside the files listed below arrived from qm and carries qm's
+commits, not this repository's. qm is MIT licensed (Copyright (c) 2026 QM
+contributors); this repository is MIT licensed (Copyright (c) 2026 Divyajot
+Singh). Both licenses permit the derivation, and the same person owns both.
+
+## Authored here, not inherited
+
+    README.md                             the Company Brain thesis
+    ROADMAP.md                            H0-H3 horizons and the anti-roadmap
+    docs/architecture.md
+    docs/analysis/qm.md                   what qm gives us and what it doesn't
+    docs/analysis/vortic-contextlayer.md
+    adrs/0001-build-strategy.md           superseded
+    adrs/0002-permission-model.md
+    adrs/0003-fork-qm.md
+    NOTICE                                this file
+
+`LICENSE` and `.gitignore` are qm's, modified. qm's own README is preserved as
+`README.qm.md`, so the root `README.md` can describe Company Brain.
+
+## Re-syncing with upstream
+
+This repository shares history with qm, so upstream syncs are ordinary merges:
+
+    git remote add qm https://github.com/divyajotsingh093/qm
+    git fetch qm main
+    git merge qm/main
+
+The inherited `update-qm` skill automates this and opens a sync PR. The
+`upstream-pr` skill sends a change the other way, for fixes that belong in qm
+core rather than here.
+
+## Known gaps in this environment
+
+`plugins/web-ui` cannot be installed from behind a restricted egress proxy. Its
+dependency `@earendil-works/pi-web-ui` requires `xlsx` pinned to a direct
+tarball at `cdn.sheetjs.com` rather than the npm registry, which returns 403
+under a default-deny policy. The chat UI is therefore unverified here: not
+built, not run, tests not executed. Every other plugin installs from the
+registry and passes: admin 77 tests, portal 105, auth 52.
