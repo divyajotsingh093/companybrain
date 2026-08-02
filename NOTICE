@@ -43,6 +43,12 @@ core rather than here.
 `plugins/web-ui` cannot be installed from behind a restricted egress proxy. Its
 dependency `@earendil-works/pi-web-ui` requires `xlsx` pinned to a direct
 tarball at `cdn.sheetjs.com` rather than the npm registry, which returns 403
-under a default-deny policy. The chat UI is therefore unverified here: not
-built, not run, tests not executed. Every other plugin installs from the
-registry and passes: admin 77 tests, portal 105, auth 52.
+under a default-deny policy.
+
+This is an egress restriction, not a defect: CI installs, typechecks, tests,
+builds and boots the web-ui production image successfully. Only local work
+behind such a proxy is affected, and only for that one plugin — admin, portal
+and auth install from the registry and pass locally (77, 105 and 52 tests).
+
+A dependency fetched from a vendor CDN rather than the registry is still worth
+removing on its own merits.
