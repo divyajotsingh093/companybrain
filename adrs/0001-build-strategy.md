@@ -1,7 +1,12 @@
 # ADR-0001 — Build the brain as a standalone service, not a qm fork
 
-- **Status:** proposed (assumption — this question went unanswered when the repo was founded)
+- **Status:** superseded by [ADR-0003](./0003-fork-qm.md)
 - **Date:** 2026-08-02
+
+> This ADR recommended against forking qm. The repository was forked from qm the same day. The
+> reasoning below is preserved as written, including the LOC figure in *Context*, which counted
+> only `src/` and missed roughly 43k lines of plugin and UI code — the omission that most directly
+> undercut the recommendation. ADR-0003 records what changed.
 
 ## Context
 
