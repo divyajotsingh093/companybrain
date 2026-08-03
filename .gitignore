@@ -1,23 +1,36 @@
 node_modules/
+dist/
+build/
+coverage/
+*.tsbuildinfo
+.generated/
+
 data/
-*.log
-.DS_Store
+local/data/
 
 .env
+.env.*
+!.env.example
 *.env
-.env.local
 *.env.local
+
 *.tfstate
 *.tfstate.*
 .terraform/
+
+*.log
+npm-debug.log*
+
+.DS_Store
+.idea/
+.vscode/
 .claude/settings.local.json
 .gstack/
 .ci-instance/
-test/live-slack/out/
-.generated/
-__pycache__/
-*.pyc
+.context/
 
+test/live-slack/out/
 docs/master.html
 
-.context/
+__pycache__/
+*.pyc

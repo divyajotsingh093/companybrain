@@ -1,179 +1,117 @@
-# qm
+# Company Brain
 
-A multiplayer agent harness for work. In Slack and on the web.
+Everyone in the organisation shares one agent, and that agent knows what the company knows —
+without ever showing anyone a document they aren't allowed to see.
 
-![The QM web UI: two concurrent sessions, a sidebar of personal files, crons, keychain, deploys, memory, and skills](./docs/screenshots/web-ui-hero.png)
+This repository holds the thesis, architecture and roadmap for that initiative, and — as of the
+fork described in [`NOTICE`](./NOTICE) — the codebase we're building it on.
 
-## What is QM?
+## The problem
 
-Most agents are designed like personal assistants. You can make one work for a whole
-company, but it quickly gets complex. QM is designed for startups. Employees each get
-their own isolated workspace and work independently without affecting each other, and
-they can also collaborate with the agent in channels, group messages, and projects.
+Ask any company where a decision was made, why a customer churned, or what the current position
+on some policy is, and the answer exists — spread across Drive, Slack, GitHub, Jira and a few
+people's heads. Search finds documents when you already know what they're called. It doesn't
+answer questions.
 
-Each person and each room has its own scoped memory, files, keychain view, permissions,
-crons, web apps, and durable sandbox.
+Agents should fix this, and mostly haven't, for two reasons that pull in opposite directions:
 
-It's built with open source in mind. Pick your own harness and model and switch between
-them — Pi, OpenCode, Codex, and Claude Code all drive the same core, so a deployment
-isn't tied to any single vendor.
+1. **Personal agents don't scale to a company.** Give each employee their own assistant and you
+   get fifty disconnected assistants, fifty sets of credentials, and no shared understanding.
+2. **Company-wide agents leak.** The moment one index serves everyone, someone's compensation
+   review shows up in someone else's answer. Most "AI search over your company" products treat
+   permissions as a filter bolted on afterwards. It isn't; it's the schema.
 
-## Features
+## What we found
 
-- **Personal and shared scopes.** People customize the agent to be _theirs_, and still
-  work with it collaboratively in Slack channels and projects.
-- **Slack and web.** The same identity and configuration carries between Slack and the
-  web app.
-- **Admin control.** Set org-level configuration, a security posture, and which
-  harnesses and models are available.
-- **Web apps.** Spin up custom internal apps and publish them to the right people.
-- **Shared skills.** Skills are scope-owned and shareable by grant, with admin-gated
-  promotion to the whole org and skill packs imported from git repositories.
-- **Background work.** Crons and watches run work while nobody's watching.
+We studied two existing codebases before starting. Full write-ups in
+[`docs/analysis/`](./docs/analysis/).
 
-## What you can do with it
+[**qm**](https://github.com/divyajotsingh093/qm) is a multiplayer agent harness — roughly 117k
+lines of application code: 74.8k in `src/`, 21.6k of plugin source, plus a 14k-line admin console
+and a 6.7k-line stylesheet. Personal and shared scopes, Slack and web surfaces, a durable sandbox
+per scope, skills, connectors, crons, an ACL grant store, an audit trail, and a security posture
+model. 3,712 tests, green. It is the first half of the problem, largely solved, under MIT — and
+it is now the base of this repository.
 
-- Search internal notes, email, documents, databases, and the web together
-- Retrieve information from your company brain
-- Build internal apps, publish them to the right people, and keep their data current
-- Learn your writing voice from past sends, then triage your inbox on a schedule —
-  labels and reply drafts included
-- Work in an existing repository: run tests, open PRs, monitor CI, check system logs
-- Track a project in a shared channel and post updates and follow-ups
+[**Vortic ContextLayer**](https://github.com/divyajotsingh093/vortic-contextlayer) is a
+model-agnostic backend for MCP apps. Its real contribution to us is method rather than code: a
+retrieval discipline (embed the intent, fetch top-K, keep the rest out of the model's context)
+and a roadmap format we've copied wholesale.
 
-## Architecture
+The gap is the thing worth building. qm's memory is a single markdown file per scope —
+`memory/MEMORY.md`, capped at 300 bullet facts, with `query()` implemented as literal substring
+matching over bullet lines. It does have real full-text search, but over one source only: cached
+Slack messages, via a `tsvector` column and a GIN index in `src/surface-cache/surface-cache.ts`.
+There are no embeddings anywhere in it. A notebook plus a Slack index is not a company's
+knowledge. Vortic, meanwhile, _does_ run pgvector with HNSW cosine indexes — over
+`mcp_tools.embedding`, to choose which tools to show the model. Right technique, different target.
 
-```mermaid
-flowchart LR
-  DB[("Postgres<br/>sessions · memory · queue")]
+Neither project has an organizational knowledge layer. That's our half.
 
-  subgraph CORE["Headless core"]
-    API["API · identity · policy · scheduler"]
-    LOOP["Agent loop<br/>(Pi, OpenCode, Claude Code)"]
-    API <--> LOOP
-  end
+## What we're building
 
-  SBX["Per-scope sandbox<br/>files · tools · logged-in services"]
+A permission-aware knowledge service: ingest an organisation's real sources, keep each chunk
+bound to the permissions of the system it came from, and answer questions with citations —
+resolving permissions against the person asking, on every query.
 
-  DB <--> API
-  LOOP <--> SBX
+We build it inside the forked harness rather than beside it. [ADR-0001](./adrs/0001-build-strategy.md)
+argued the opposite — a standalone service over MCP — and is now superseded; it undercounted what
+qm already ships, in particular a working web UI. Keeping the knowledge layer addressable over MCP
+remains the goal, so it can also serve Claude Code and Cursor.
+
+```
+sources ──▶ ingest ──▶ chunk + embed ──▶ index (chunk + ACL together)
+ Drive                                        │
+ Slack                                        ▼
+ GitHub          ask ──▶ resolve asker's identity ──▶ retrieve ──▶ cited answer
+                                                     (filtered by ACL)
 ```
 
-Every turn runs through a central core, which can use a variety of models and harnesses
-to generate the response. A Postgres persistence layer holds user data, session history,
-and other durable state. The agent has a small, fixed tool surface; one of those tools is
-`execute`, which runs commands in the scope's own isolated sandbox — its durable computer,
-where installed tools stay installed. The web UI, the admin panel, and the public portal
-are optional plugins over the core's HTTP API;
+The one rule everything else bends around: **a chunk is only retrievable by someone the source
+system would show it to.** Not filtered after ranking — excluded before it. See
+[ADR-0002](./adrs/0002-permission-model.md).
+
+## What we inherited
+
+The core runs TypeScript directly on Node and uses Fastify for HTTP. The web UI, the admin panel
+and the public portal are optional plugins over the core's HTTP API;
 Slack is an optional in-process plugin that core starts
-and supervises through a direct service client.
+and supervises through a direct service client. The Slack plugin uses Bolt; the web UI builds with
+Vite and renders with Lit, over a hand-written admin console that ships as a single HTML file.
 
-The core runs TypeScript directly on Node and uses Fastify for HTTP. The Slack plugin
-uses Bolt; the web UI builds with Vite and renders with Lit.
+None of this is the knowledge layer. It is the surface, identity, credential and scheduling
+machinery that layer would otherwise need built from nothing —
+[`docs/analysis/qm.md`](./docs/analysis/qm.md) breaks down what transfers and what doesn't. The
+part we actually have to build, permission-scoped retrieval, is greenfield: qm carries no
+embeddings, and its ACL grants are authored rather than mirrored from source systems.
 
-The core itself is generic. Everything specific to one company — org config, custom tools
-and skills, sandbox image, infrastructure — lives in a **deployment directory** that the
-[`qm` CLI](./cli/README.md) validates and deploys. Every substrate (harness, session
-store, sandbox, memory) sits behind an interface, so production implementations swap in
-via one wiring file.
+## Repository map
 
-## Security and secrets
+| Path                                                                             | What's in it                                                 |
+| -------------------------------------------------------------------------------- | ------------------------------------------------------------ |
+| [`ROADMAP.md`](./ROADMAP.md)                                                     | Horizons H0–H3, principles, and the anti-roadmap             |
+| [`docs/architecture.md`](./docs/architecture.md)                                 | Target architecture and how it attaches to qm                |
+| [`docs/analysis/qm.md`](./docs/analysis/qm.md)                                   | What qm gives us, what it doesn't                            |
+| [`docs/analysis/vortic-contextlayer.md`](./docs/analysis/vortic-contextlayer.md) | What to copy from Vortic, and what to leave                  |
+| [`adrs/`](./adrs/)                                                               | Decisions, with their consequences and reversal paths        |
+| [`NOTICE`](./NOTICE)                                                             | What was inherited from qm, at which commit, and what wasn't |
+| [`README.qm.md`](./README.qm.md)                                                 | qm's own README, preserved as it was upstream                |
+| `src/`, `plugins/`, `cli/`, `test/`                                              | Inherited from qm; see `NOTICE`                              |
 
-QM's approach follows local coding agents like OpenCode, Codex, and Claude Code: the
-agent acts as the person it's working for, with their credentials and permissions, and
-everything it does is audited. An org picks one security posture, which narrower scopes
-can only tighten:
+## Status
 
-- **Strict** — every harness tool call pauses for human approval, except the two
-  no-effect turn enders.
-- **Auto** (default) — a classifier screens provenance-labelled external data and tool
-  results before they reach the model; a deployment can point that at its own screening
-  proxy.
-- **Dangerous** — no content screening, no pauses between tool calls.
+Forked, green, and not yet started on the actual product. The roadmap's H0 target is one team
+asking questions in Slack and getting cited answers drawn only from what they can already read.
 
-The predeclared command policy — approval rules and hard denials for things like
-recursive deletes or destructive SQL — applies in every posture, Dangerous included.
+Running the tests needs Node ≥24 (the code runs TypeScript directly, no build) and a Postgres for
+the full suite — without `DATABASE_URL` the Postgres-backed tests report as skipped rather than
+failed, so CI without a database checks less than it appears to.
 
-[`SECURITY.md`](./SECURITY.md) has the threat model, the operator assumptions, and the
-known limitations.
-
-## Deploy it for your org
-
-Create an organization-owned deployment repository that depends on `@yc-software/qm`:
-
-```bash
-npm exec --yes --package=@yc-software/qm@latest -- \
-  qm init . --org <slug> --target <fly-or-aws>
+```
 npm install
+npm test                    # add --experimental-strip-types on Node 22
 ```
 
-Initialization materializes a deployment skill for an agent and walks through
-infrastructure, web sign-in, connector credentials, optional Slack access, deployment,
-and live verification — no source checkout required. Each deployment runs in the
-operator's own cloud account; initialization does not generate or enable deployment CI,
-and this repository has no production deployment workflow. See
-[`deployment.md`](./deployment.md) for the details.
-
-## Contributing
-
-We take contributions as _human-written_ text, not code — see
-[`CONTRIBUTING.md`](./CONTRIBUTING.md). Describe the change you'd like informally in a
-`.txt` or `.md` file in [`adrs/`](./adrs/), and if we're aligned we'll handle the
-implementation. Report vulnerabilities privately — see [`SECURITY.md`](./SECURITY.md),
-not a public issue.
-
-## Customize your instance
-
-The deployment repository above carries config and a sandbox layer, and never needs a
-source checkout. Some organizations want the opposite trade: the whole codebase in one
-place, so engineers and coding agents read core and customizations together, while the
-customizations themselves stay private. For that, keep a **private fork**: a standalone
-private repository whose history begins as a clone of qm and whose core stays identical
-to upstream.
-
-Populate it once, then clone it to work in:
-
-```bash
-gh repo create <org>/qm-private --private
-
-git clone --bare git@github.com:yc-software/qm qm-seed.git
-git -C qm-seed.git push --mirror git@github.com:<org>/qm-private
-rm -rf qm-seed.git
-
-git clone git@github.com:<org>/qm-private
-git -C qm-private remote add upstream git@github.com:yc-software/qm
-```
-
-Create the private fork with a plain clone, as shown above, and never with GitHub's fork
-feature. The word "fork" here names the concept — a downstream copy that diverges
-deliberately and merges from upstream — not GitHub's Fork button. A GitHub fork inherits
-the visibility of the repository it came from, so a fork of a public repository cannot be
-made private. A GitHub fork also shares one object network with the repository it came
-from, so commits pushed to the fork stay fetchable by SHA from the public side. Many
-organizations disallow forking private repositories as well. A plain clone has none of
-these problems, and it costs one thing: the clone is an ordinary repository, so upstream's
-CI workflows run live in your own account. Expect to supply the secrets those workflows
-need, or disable the ones you do not want running.
-
-Everything specific to your organization goes in `deploy/layers/<org>/` — config, sandbox
-tools and skills, plugin images, infrastructure — in the same shape `qm init` produces. See
-[`deploy/layers/README.md`](./deploy/layers/README.md). Core stays byte-identical to
-upstream, which is what keeps merges small.
-
-Two skills maintain the boundary in both directions. `update-qm` merges upstream qm into
-the private fork and opens the sync PR; `upstream-pr` sends an organization-agnostic fix back to
-qm, cutting the branch from `upstream/main` and checking the outgoing diff, commit
-messages, and screenshots for organization identifiers before it pushes. Nothing under
-`deploy/layers/` ever travels upstream.
-
-## Going deeper
-
-- [`docs/getting-started.md`](./docs/getting-started.md) — first run, end to end
-- [`cli/README.md`](./cli/README.md) — the `qm` CLI and the deployment directory contract
-- [`docs/deploy-directory.md`](./docs/deploy-directory.md) — the deployment directory in full
-- [`.env.example`](./.env.example) — every knob, documented in place
-- [`plugins/`](./plugins) — the surfaces (Slack, web UI, admin, portal)
-
-## License
-
-Except where otherwise noted, QM is available under the [MIT License](./LICENSE).
+Three choices in these documents remain assumptions rather than settled decisions: docs before
+code; internal dogfooding first with the repo public and MIT; Drive, Slack and GitHub as the first
+three sources. A fourth — standalone service versus fork — was settled by forking.
