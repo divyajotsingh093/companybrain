@@ -4,6 +4,7 @@ import { createPostgresKnowledgeStore } from "../src/knowledge/postgres-knowledg
 import { domainRule, groupRule, principalRule, publicRule } from "../src/knowledge/types.ts";
 import type { Asker, IngestedDocument } from "../src/knowledge/types.ts";
 import type { KnowledgeStore } from "../src/knowledge/knowledge-store.ts";
+import { driveDocument } from "../src/knowledge/sources/drive-source.ts";
 
 const URL = process.env.DATABASE_URL;
 const skip = URL ? false : "set DATABASE_URL (a Postgres) to run the knowledge-store tests";
@@ -169,4 +170,45 @@ test("an empty group list does not accidentally match group-granted documents", 
 
   const noGroups: Asker = { principalId: "P-bob", groupIds: [], domains: [] };
   assert.deepEqual(await store.search(noGroups, "restricted"), []);
+});
+
+test("a Drive file shared to a person reaches only that person", { skip }, async () => {
+  const { document } = driveDocument(
+    { id: "drive-private", title: "comp review", viewUrl: "https://docs.google.com/d/private" },
+    [{ type: "user", role: "owner", emailAddress: "Alice@Example.com" }],
+    ["the compensation review for this cycle"],
+  );
+  await store.ingest(document);
+
+  const owner: Asker = { principalId: "alice@example.com", groupIds: [], domains: ["example.com"] };
+  assert.equal((await store.search(owner, "compensation")).length, 1);
+  assert.deepEqual(await store.search(bob, "compensation"), []);
+});
+
+test("a link-shared Drive file reaches someone it was never shared with directly", { skip }, async () => {
+  const { document } = driveDocument(
+    { id: "drive-link", title: "whitepaper", viewUrl: "https://docs.google.com/d/link" },
+    [
+      { role: "writer", type: "anyone" },
+      { displayName: "brian", emailAddress: "brian@palaverlabs.com", role: "owner", type: "user" },
+    ],
+    ["the eApp whitepaper draft"],
+  );
+  await store.ingest(document);
+
+  assert.equal((await store.search(outsider, "whitepaper")).length, 1);
+});
+
+test("a Drive file whose permissions we cannot express is retrievable by nobody", { skip }, async () => {
+  const { document, unmapped } = driveDocument(
+    { id: "drive-opaque", title: "opaque" },
+    [{ type: "teamDrive", role: "reader" }],
+    ["a document behind an unmodelled permission"],
+  );
+  assert.deepEqual(unmapped, ["type:teamDrive"]);
+  await store.ingest(document);
+
+  for (const asker of [alice, bob, outsider]) {
+    assert.deepEqual(await store.search(asker, "unmodelled"), [], `${asker.principalId} must not see it`);
+  }
 });
