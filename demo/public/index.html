@@ -5,38 +5,98 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Company Brain — H0 demo</title>
     <style>
+      /*
+        Tokens below are read directly from @earendil-works/pi-web-ui/dist/app.css
+        (the base qm's own chat UI is built on) and from plugins/web-ui/src/shell.css's
+        --brand-accent / --app-font / --radius-* — not invented. Light values first,
+        dark values under prefers-color-scheme, matching that package's :root/.dark pair.
+      */
       :root {
         color-scheme: light dark;
-        --bg: #fbfbfa;
-        --surface: #ffffff;
-        --border: #e4e7ec;
-        --text: #18181b;
-        --muted: #667085;
-        --accent: #6b5cf0;
+        --background: oklch(100% 0 0);
+        --foreground: oklch(14.5% 0 0);
+        --card: oklch(100% 0 0);
+        --border: oklch(92.2% 0 0);
+        --secondary: oklch(97% 0 0);
+        --muted-foreground: oklch(55.6% 0 0);
+        --brand-accent: #4f46e5;
+        --app-font: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+        --radius-sm: 8px;
+        --radius-md: 10px;
+        --radius-lg: 16px;
+        --content-w: 720px;
+      }
+      @media (prefers-color-scheme: dark) {
+        :root {
+          --background: oklch(14.5% 0 0);
+          --foreground: oklch(98.5% 0 0);
+          --card: oklch(20.5% 0 0);
+          --border: oklch(27.5% 0 0);
+          --secondary: oklch(26.9% 0 0);
+          --muted-foreground: oklch(70.8% 0 0);
+        }
       }
       * {
         box-sizing: border-box;
       }
+      html,
+      body {
+        height: 100%;
+      }
       body {
         margin: 0;
-        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
-        background: var(--bg);
-        color: var(--text);
-      }
-      main {
-        max-width: 720px;
-        margin: 0 auto;
-        padding: 40px 20px 80px;
-      }
-      h1 {
-        font-size: 20px;
-        margin: 0 0 4px;
-      }
-      p.sub {
-        color: var(--muted);
-        margin: 0 0 28px;
+        font-family: var(--app-font);
         font-size: 14px;
         line-height: 1.5;
+        background: var(--background);
+        color: var(--foreground);
+        -webkit-font-smoothing: antialiased;
+      }
+      header.brand {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        padding: 14px 20px;
+        border-bottom: 1px solid var(--border);
+        background: color-mix(in srgb, var(--secondary) 42%, var(--background));
+      }
+      .brand-mark {
+        width: 26px;
+        height: 26px;
+        border-radius: var(--radius-sm);
+        background: var(--brand-accent);
+        color: white;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-weight: 700;
+        font-size: 13px;
+        flex-shrink: 0;
+      }
+      .brand-name {
+        font-weight: 600;
+        font-size: 14px;
+      }
+      .brand-tag {
+        font-size: 12px;
+        color: var(--muted-foreground);
+        margin-left: 4px;
+      }
+      main {
+        max-width: var(--content-w);
+        margin: 0 auto;
+        padding: 32px 20px 80px;
+      }
+      h1 {
+        font-size: 19px;
+        font-weight: 600;
+        margin: 0 0 6px;
+      }
+      p.sub {
+        color: var(--muted-foreground);
+        margin: 0 0 26px;
+        font-size: 13px;
+        line-height: 1.6;
       }
       .row {
         display: flex;
@@ -48,9 +108,9 @@
         font: inherit;
         padding: 10px 12px;
         border: 1px solid var(--border);
-        border-radius: 8px;
-        background: var(--surface);
-        color: var(--text);
+        border-radius: var(--radius-sm);
+        background: var(--card);
+        color: var(--foreground);
       }
       select {
         flex: 0 0 auto;
@@ -59,12 +119,19 @@
       input[type="text"] {
         flex: 1;
       }
+      input[type="text"]:focus,
+      select:focus,
+      button:focus-visible {
+        outline: 2px solid var(--brand-accent);
+        outline-offset: 1px;
+      }
       button {
         font: inherit;
+        font-weight: 500;
         padding: 10px 16px;
         border: none;
-        border-radius: 8px;
-        background: var(--accent);
+        border-radius: var(--radius-sm);
+        background: var(--brand-accent);
         color: white;
         cursor: pointer;
       }
@@ -73,9 +140,10 @@
         cursor: default;
       }
       .asker-note {
-        font-size: 13px;
-        color: var(--muted);
+        font-size: 12px;
+        color: var(--muted-foreground);
         margin-bottom: 24px;
+        font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
       }
       ul {
         list-style: none;
@@ -84,42 +152,64 @@
       }
       li {
         border: 1px solid var(--border);
-        border-radius: 10px;
+        border-radius: var(--radius-md);
         padding: 14px 16px;
         margin-bottom: 10px;
-        background: var(--surface);
+        background: var(--card);
       }
       li a {
-        color: var(--accent);
+        color: var(--brand-accent);
         text-decoration: none;
         font-weight: 600;
         font-size: 14px;
       }
+      li a:hover {
+        text-decoration: underline;
+      }
       li .source {
-        font-size: 11px;
+        font-size: 10px;
         text-transform: uppercase;
-        letter-spacing: 0.04em;
-        color: var(--muted);
+        letter-spacing: 0.05em;
+        color: var(--muted-foreground);
         margin-left: 8px;
+        border: 1px solid var(--border);
+        border-radius: 999px;
+        padding: 2px 8px;
       }
       li p {
         margin: 8px 0 0;
         font-size: 13px;
-        line-height: 1.5;
-        color: var(--text);
+        line-height: 1.55;
+        color: var(--foreground);
         white-space: pre-wrap;
       }
       .empty,
       .status {
-        color: var(--muted);
+        color: var(--muted-foreground);
         font-size: 14px;
         padding: 16px 0;
+      }
+      footer {
+        max-width: var(--content-w);
+        margin: 24px auto 0;
+        padding: 16px 20px 0;
+        border-top: 1px solid var(--border);
+        font-size: 12px;
+        color: var(--muted-foreground);
+      }
+      footer a {
+        color: inherit;
       }
     </style>
   </head>
   <body>
+    <header class="brand">
+      <div class="brand-mark">A</div>
+      <span class="brand-name">Company Brain</span>
+      <span class="brand-tag">H0 demo</span>
+    </header>
     <main>
-      <h1>Company Brain — H0 demo</h1>
+      <h1>Search, scoped to who's asking</h1>
       <p class="sub">
         This is not a login. Pick who is asking, then ask the same question as different people — the point is that the
         results differ in exactly the way each person's access differs. Two real documents are seeded from a live Drive
@@ -138,6 +228,10 @@
 
       <div id="results"></div>
     </main>
+    <footer>
+      Permission check runs inside the retrieval query, not after it —
+      <a href="https://github.com/divyajotsingh093/companybrain/blob/main/adrs/0002-permission-model.md">ADR-0002</a>.
+    </footer>
 
     <script>
       const ASKERS = [
