@@ -257,3 +257,42 @@ jobs:
           npm test
       - name: Build and boot production image
         run: bash scripts/smoke-surface-image.sh portal
+
+  demo:
+    name: H0 demo
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: demo
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444
+        with:
+          node-version-file: .node-version
+          cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            demo/package-lock.json
+      - name: Install core dependencies
+        run: npm ci
+      - name: Install, typecheck
+        working-directory: demo
+        run: |
+          npm ci
+          npm run typecheck
+      - name: Seed and verify the real handler against a live Postgres
+        env:
+          DATABASE_URL: postgres://postgres:postgres@localhost:5432/demo
+        run: |
+          npm run --prefix demo seed
+          npm run --prefix demo verify-local
