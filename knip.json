@@ -27,6 +27,10 @@
       ]
     },
     "cli": { "entry": ["bin/qm.ts"] },
+    "demo": {
+      "entry": ["api/**/*.ts"],
+      "ignoreDependencies": ["pg", "@types/pg"]
+    },
     "plugins/*": {},
     "plugins/web-ui": {
       "entry": ["src/lazy-katex.ts", "src/lazy-hljs.ts", "src/hljs-lang-stub.ts", "test/**/*.test.ts"],

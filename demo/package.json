@@ -1,0 +1,20 @@
+{
+  "name": "companybrain-h0-demo",
+  "private": true,
+  "type": "module",
+  "description": "H0 demo: a search page over the permission-scoped knowledge store. Not the product — a way to see ADR-0002 hold on real data.",
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "seed": "node --experimental-strip-types seed.ts",
+    "verify-local": "node --experimental-strip-types verify-local.ts"
+  },
+  "dependencies": {
+    "pg": "^8.13.1"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "@types/pg": "^8.11.0",
+    "@vercel/node": "^5.1.0",
+    "typescript": "^5.8.2"
+  }
+}
