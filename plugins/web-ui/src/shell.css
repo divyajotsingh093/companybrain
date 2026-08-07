@@ -8,9 +8,33 @@
   --radius-md: 10px;
   --radius-lg: 16px;
   --chat-pad: 22px;
-  --brand-accent: #4f46e5;
+  --brand-accent: #f97316;
   --dev-accent: #8a5a00;
   --brand-mark: "A";
+  --brand-accent-hi: color-mix(in srgb, var(--brand-accent) 76%, #ffffff);
+  --brand-accent-fg: #ffffff;
+  --brand-gradient: linear-gradient(135deg, var(--brand-accent), var(--brand-accent-hi));
+  --brand-accent-text: color-mix(in srgb, var(--brand-accent) 80%, #000000);
+  --brand-rail: #0f172a;
+  --brand-rail-fg: #e2e8f0;
+  --brand-rail-muted: #7c8ba1;
+  --brand-rail-active-bg: #1e293b;
+  --canvas-wash: radial-gradient(circle at 100% 0%, #fff7ed 0%, var(--background) 45%);
+  --chip-outline-border: #fdba74;
+  --chip-outline-fg: var(--brand-accent-text);
+}
+
+.dark {
+  --brand-accent-hi: color-mix(in srgb, var(--brand-accent) 82%, #ffffff);
+  --brand-accent-fg: #1a1205;
+  --brand-accent-text: color-mix(in srgb, var(--brand-accent) 62%, #ffffff);
+  --brand-rail: #080d18;
+  --brand-rail-fg: #e2e8f0;
+  --brand-rail-muted: #64748b;
+  --brand-rail-active-bg: #1e293b;
+  --canvas-wash: radial-gradient(circle at 100% 0%, #1c1410 0%, var(--background) 45%);
+  --chip-outline-border: #7c2d12;
+  --chip-outline-fg: var(--brand-accent-text);
 }
 
 html,
