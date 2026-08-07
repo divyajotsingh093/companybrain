@@ -34,3 +34,5 @@ docs/master.html
 
 __pycache__/
 *.pyc
+.vercel
+.superpowers/
