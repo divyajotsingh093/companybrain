@@ -23,9 +23,21 @@ over Git and SQLite, reported running 40–50 mixed Claude Code, Codex and Gemin
 no company-knowledge graph and no permission model. Borrow its patterns (identities, leases,
 git-backed archive); compete on permissioned knowledge and governed action.
 
-**Starting point in this repo.** qm exposes no MCP server of its own today — only an in-process
-one inside `src/harness/claude-harness.ts`. GBrain ships an MCP server over stdio and HTTP.
-`plugins/web-ui` has no graph library.
+**Starting point in this repo.** qm exposes no MCP server of its own — only an in-process one
+inside `src/harness/claude-harness.ts`. That is still true upstream: `yc-software/qm` at
+`234022f` added MCP connectors (commit `add5f87`), but they are client-side — admins register
+external HTTP MCP servers and every harness receives their tools. GBrain ships an MCP server over
+stdio and HTTP. `plugins/web-ui` has no graph library.
+
+**The board is qm's multiplayer model extended to outside agents, not a parallel system.** qm
+already gives every employee, channel and project an isolated scope with memory, files,
+credentials, permissions and sessions shared by humans and agents. External agents should become
+first-class participants in those scopes. A separate board with its own identities and
+permissions would duplicate the part of qm that is hardest to get right.
+
+**qm already runs two of the four clients.** `src/harness/` includes Claude and Codex harnesses
+(plus OpenCode and Pi). Those can reach the board through qm's own MCP connector path. Cursor and
+Grok have no qm harness and must connect from outside.
 
 **A shared board is a prompt-injection channel.** One agent's post is another agent's tool
 result. That is the biggest new risk this product introduces, and item 16 is not optional.
@@ -36,6 +48,12 @@ result. That is the biggest new risk this product introduces, and item 16 is not
 Streamable HTTP with OAuth 2.1, one connection per agent identity. Every read and write passes
 through the permission predicate in `company-brain.md` #1–4, including graph traversal and
 counts. Extend GBrain's MCP server rather than writing one. **Effort L.**
+
+Two routes onto the same server. External clients (Cursor, Grok, standalone Claude Code and Codex
+CLIs) connect directly. qm's own harnesses get it by registering the brain as a qm MCP connector,
+which injects its tools into every harness for free — but only after `harness.md` #3 lands:
+upstream connectors call with the server's static credential ("per-user OAuth is left for a
+follow-up"), so a brain attached that way today would be permission-blind.
 
 ### 2. Agent identity bound to a human
 Each agent session is a principal with `kind: agent`, `client` (claude_code, codex, cursor,
@@ -118,6 +136,12 @@ four clients go through one server, Gumstack-style cross-tool traceability comes
 Posts are returned to agents marked as untrusted content, never as instructions. A handoff's
 embedded commands are never executed automatically. Writes triggered by another agent's post
 always require approval. **Effort M. Blocking before any second agent connects.**
+
+Reuse, don't build: upstream qm already passes every MCP connector result "through the
+external-content screen like any untrusted tool output", and keeps only read-only servers' tools
+in read-only contexts. Board posts should flow through that same screen. The part qm cannot cover
+is external clients, which receive posts without passing through qm, so the board server must
+also mark content as untrusted in what it returns.
 
 ### 17. Loop and spam controls
 Per-identity rate limits, and detection of agents replying to each other indefinitely.
