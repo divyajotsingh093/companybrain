@@ -102,28 +102,72 @@ board complements Slack; it does not replace it. **Effort M.**
 
 ## B2 — Visualisation (`plugins/web-ui`)
 
-### 10. Graph view
-Force-directed canvas of entities, skills, agents and posts, with typed edges from GBrain's link
-extraction and node colours from the Bold Signal tokens. Use sigma.js with graphology (WebGL,
-built for large graphs); d3-force only suits a few thousand nodes, and GBrain's reference
-instance holds 146k pages. Server-filtered, so the graph never reveals nodes, counts or folders
-the viewer cannot access — the exact bug in Gumloop's own changelog. **Effort L.**
+Reference: SkillTree (skilltree.altari.ai/explore), inspected 2026-09-13. It is the right
+interaction model and the wrong data: its map is a static, aspirational plan with self-reported
+status. Ours takes the same shape and fills it with live, permission-filtered state.
+
+### 10. Three-level map: organisation → skill tree → node
+A force-directed graph of a whole company is a hairball, so the primary view is hierarchical, as
+in SkillTree:
+
+1. **Organisation** — a radial constellation with one hub per department or compartment and
+   its skills radiating out; the brain itself at the centre.
+2. **Skill tree** — clicking a hub zooms into that department as a tree growing from its root,
+   grouped into branches (SkillTree's Operations shows Build Ops, Reliability, Client Comms,
+   Knowledge, Onboarding). Neighbouring departments sit at the screen edges with arrows to move
+   between them, a back link returns to the organisation, and a counter shows progress
+   ("0 of 19 live").
+3. **Node** — clicking a skill zooms and rings it, labels its neighbours, and opens the detail
+   panel (#13).
+
+Force-directed layout is reserved for the knowledge neighbourhood around a focused node, where
+the node count is small. Render with sigma.js and graphology (WebGL) using precomputed radial
+and tree positions. Server-filtered at every level, so no view reveals nodes, counts or branches
+the viewer cannot access — the bug Gumloop's changelog records fixing in its own Company Brain.
+**Effort L.**
 
 ### 11. Live activity animation
-Edges pulse when an agent reads or writes along them; agents sit beside what they're working on;
-claims show a halo with a draining TTL ring. Streamed over SSE from core. Honours
+Zoom transitions dim and blur what is out of focus. Edges pulse when an agent reads or writes
+along them; agents sit beside the skill they're running; claims show a halo with a draining TTL
+ring; a skill going live lights up in the tree. Streamed over SSE from core. Honours
 `prefers-reduced-motion`. **Effort M.**
 
 ### 12. Swimlane timeline
 One lane per agent client and one for humans, with handoffs drawn between lanes. The fastest way
 to see who did what, in order. **Effort M.**
 
-### 13. Node detail drawer
-Provenance, citations, who can see it, approval state and history, reusing the Bold Signal
-finding and citation-chip components already specced. **Effort S.**
+### 13. Skill node panel
+SkillTree's node panel maps almost field for field onto a governed skill. Each field is shown
+with our live source instead of its static one:
 
-### 14. Radial skill map
-SkillTree-style map of skills by rollout stage and autonomy. **Effort M. Later.**
+| SkillTree field | Our field and where it comes from |
+|---|---|
+| Autonomy label ("Fully autonomous") | `autonomy` on the skill, enforced through qm approvals |
+| Breadcrumb (Operations · Build Ops) | Scope or compartment and branch |
+| "1 runnable skill file ships with this job" | The skill in qm's registry, with its review state |
+| Breaks into (sub-skills) | Composed sub-skills |
+| Your status: Not started / In development / Live | Derived from the skill lifecycle (draft, reviewed, published) and real runs — never a self-reported toggle |
+| Your notes (prompt, tools, setup) | Per-user configuration, saved to the user's scope |
+| Builds on ("Company Knowledge Base") | Prerequisite edges, used for layout only |
+| What it replaces | Value statement authored with the skill |
+
+Add what SkillTree cannot show: which agent is running it now, open claims, pending approvals,
+recent runs with provenance and citations (Bold Signal finding and citation-chip components), and
+who can see it. **Effort M.**
+
+"Builds on" stays visual. The sweep's critics killed prerequisite enforcement as preventing no
+demonstrated failure, and nothing here reverses that.
+
+### 14. Governance chart
+SkillTree's CHART view, computed rather than planned: skills placed by rollout stage (foundation,
+capture, generate, orchestrate) against autonomy (human-led, human-assisted, autonomous), with a
+per-department summary built from real skill metadata and approval audit ("19 of 22 run
+autonomously · 3 assisted · the rest stay human"). **Effort M.**
+
+### 14a. Command centers
+SkillTree's DASHBOARDS ("what each department looks like when the work runs itself") are
+mockups. Ours show each department's actual day: board activity, approvals waiting, claims, and
+outcomes. **Effort M. After #10–14.**
 
 ## B3 — Trust and operations
 
@@ -162,7 +206,7 @@ or its existence. **Effort M.**
 ## First slice
 
 Items 1 (minimal), 2, 3 (claim, finding and handoff only), 5, 6 (five tools), 7, 10 (read-only
-graph, no animation) and 16.
+organisation map and skill tree, no animation), 13 (panel without live fields) and 16.
 
 Demo that proves it: Claude Code claims a task; Codex sees the claim and picks different work;
 Cursor posts a finding linked to a file; Grok Build reads the graph and answers from it — all
