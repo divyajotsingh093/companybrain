@@ -1,18 +1,12 @@
 import { createCipheriv, createDecipheriv, createHash, randomBytes } from "node:crypto";
 
-export const CLIENTS = ["claude_code", "codex", "cursor", "grok", "web"] as const;
-export type AgentClient = (typeof CLIENTS)[number];
-export const AGENT_CLIENTS: readonly AgentClient[] = CLIENTS.filter((c) => c !== "web");
+export const AGENT_CLIENTS = ["claude_code", "codex", "cursor", "grok"] as const;
+export type AgentClient = (typeof AGENT_CLIENTS)[number];
 
-export interface Identity {
-  githubToken: string;
-  login: string;
-  uid: number;
-  client: AgentClient;
-  issuedAt: number;
+export function isAgentClient(value: string): value is AgentClient {
+  return (AGENT_CLIENTS as readonly string[]).includes(value);
 }
 
-const TOKEN_PREFIX = "cb1.";
 const IV_BYTES = 12;
 const TAG_BYTES = 16;
 
@@ -40,27 +34,6 @@ export function unseal(secret: string, purpose: string, sealed: string): unknown
   }
 }
 
-export function mintToken(secret: string, identity: Identity): string {
-  return TOKEN_PREFIX + seal(secret, "token", identity);
-}
-
-export function readToken(secret: string, presented: string | null | undefined): Identity | null {
-  if (!presented) return null;
-  const token = presented.replace(/^Bearer\s+/i, "").trim();
-  if (!token.startsWith(TOKEN_PREFIX)) return null;
-  const value = unseal(secret, "token", token.slice(TOKEN_PREFIX.length));
-  return isIdentity(value) ? value : null;
-}
-
-function isIdentity(value: unknown): value is Identity {
-  if (!value || typeof value !== "object") return false;
-  const o = value as Record<string, unknown>;
-  return (
-    typeof o.githubToken === "string" &&
-    typeof o.login === "string" &&
-    typeof o.uid === "number" &&
-    typeof o.issuedAt === "number" &&
-    typeof o.client === "string" &&
-    (CLIENTS as readonly string[]).includes(o.client)
-  );
+export function hashToken(token: string): string {
+  return createHash("sha256").update(token).digest("hex");
 }
