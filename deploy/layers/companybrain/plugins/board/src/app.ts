@@ -10,7 +10,7 @@ import type { Config } from "./config.ts";
 import { exchangeCode, type Fetch, type GitHubClient, GitHubError } from "./github.ts";
 import type { RateLimiter } from "./limits.ts";
 import { createBoardServer } from "./mcp.ts";
-import type { Store } from "./store.ts";
+import { ACTIVE_AGENT_TOKENS_PER_USER, type Store } from "./store.ts";
 import { isAgentClient, seal, unseal } from "./token.ts";
 import { type ErrorCode, isErrorCode, renderBoard, renderConnected, renderDenied, renderHome, renderMessage, renderTokenCreated } from "./web.ts";
 
@@ -29,6 +29,7 @@ const SESSION_COOKIE = "cb_session";
 const STATE_COOKIE = "cb_state";
 const STATE_MAX_AGE_MS = 10 * 60_000;
 const MCP_BODY_LIMIT = 256 * 1024;
+const FORM_BODY_LIMIT = 4 * 1024;
 const CSP = "default-src 'none'; style-src 'unsafe-inline'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'";
 
 export function createApp(deps: AppDeps): Hono {
@@ -71,27 +72,33 @@ export function createApp(deps: AppDeps): Hono {
     return c.html(renderConnected({ login: principal.login, tokens: store.activeTokens(principal.uid, "agent") }));
   });
 
-  app.post("/tokens", async (c) => {
+  const formLimit = bodyLimit({ maxSize: FORM_BODY_LIMIT, onError: (c) => c.text("Request body too large.", 413) });
+
+  app.post("/tokens", formLimit, async (c) => {
     const principal = session(c);
     if (!principal) return c.redirect("/");
     if (!sameOrigin(c)) return c.html(renderMessage("Request blocked", "That request did not come from this site."), 403);
     const form = await c.req.parseBody();
     const client = typeof form.client === "string" ? form.client : "";
     if (!isAgentClient(client)) return c.html(renderMessage("Unknown agent", "Choose Claude Code, Codex, Cursor or Grok."), 400);
+    if (store.countActiveAgentTokens(principal.uid) >= ACTIVE_AGENT_TOKENS_PER_USER) {
+      return c.html(renderMessage("Token limit reached", `You have ${ACTIVE_AGENT_TOKENS_PER_USER} active agent tokens. Revoke one before creating another.`), 429);
+    }
     const issued = auth.issue(principal.uid, "agent", client, config.agentTokenTtlMs);
     return c.html(renderTokenCreated({ login: principal.login, client, token: issued.token, mcpUrl, expiresAt: issued.row.expiresAt }));
   });
 
-  app.post("/tokens/revoke-all", (c) => {
+  app.post("/tokens/revoke-all", formLimit, (c) => {
     const principal = session(c);
     if (!principal) return c.redirect("/");
     if (!sameOrigin(c)) return c.html(renderMessage("Request blocked", "That request did not come from this site."), 403);
     store.revokeAllTokens(principal.uid);
+    store.deleteCredential(principal.uid);
     deleteCookie(c, SESSION_COOKIE, { path: "/" });
     return c.redirect("/");
   });
 
-  app.post("/tokens/:id/revoke", (c) => {
+  app.post("/tokens/:id/revoke", formLimit, (c) => {
     const principal = session(c);
     if (!principal) return c.redirect("/");
     if (!sameOrigin(c)) return c.html(renderMessage("Request blocked", "That request did not come from this site."), 403);
@@ -151,7 +158,7 @@ export function createApp(deps: AppDeps): Hono {
     }
   });
 
-  app.post("/auth/logout", (c) => {
+  app.post("/auth/logout", formLimit, (c) => {
     if (!sameOrigin(c)) return c.html(renderMessage("Request blocked", "That request did not come from this site."), 403);
     const principal = session(c);
     if (principal) store.revokeToken(principal.tokenId, principal.uid);
@@ -168,7 +175,7 @@ export function createApp(deps: AppDeps): Hono {
       if (!canUseBoard(a.role)) return c.html(renderDenied(), 404);
       return c.html(renderBoard({ repo: a.fullName, login: principal.login, board: store.readBoard(a.repoId, { limit: 100 }) }));
     } catch (err) {
-      if (err instanceof GitHubError && (err.kind === "unauthorized" || err.kind === "rate_limited" || err.kind === "unavailable")) {
+      if (!(err instanceof GitHubError) || err.kind === "unauthorized" || err.kind === "rate_limited" || err.kind === "unavailable") {
         return c.html(renderMessage("GitHub problem", "GitHub could not confirm your access right now. Reconnect or try again shortly."), 503);
       }
       return c.html(renderDenied(), 404);
@@ -190,7 +197,7 @@ export function createApp(deps: AppDeps): Hono {
           "www-authenticate": 'Bearer realm="companybrain-board"',
         });
       }
-      if (!limiter.allow(principal.tokenId)) return rpcError(c, 429, -32000, "Too many requests. Slow down.", { "retry-after": "60" });
+      if (!limiter.allow(`uid:${principal.uid}`)) return rpcError(c, 429, -32000, "Too many requests. Slow down.", { "retry-after": "60" });
       let parsed: unknown;
       try {
         parsed = await c.req.json();

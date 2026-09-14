@@ -70,6 +70,25 @@ export interface GitHubGrant {
 }
 
 export const MAX_FILE_BYTES = 1_000_000;
+export const MAX_README_BYTES = 64_000;
+
+export async function readCapped(res: Response, maxBytes: number): Promise<string> {
+  const reader = res.body?.getReader();
+  if (!reader) return "";
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  try {
+    while (total < maxBytes) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      chunks.push(value);
+      total += value.byteLength;
+    }
+  } finally {
+    await reader.cancel().catch(() => undefined);
+  }
+  return Buffer.concat(chunks).subarray(0, maxBytes).toString("utf8");
+}
 
 const SEGMENT = /^[A-Za-z0-9_.-]{1,100}$/;
 
@@ -184,10 +203,16 @@ export function createGitHub(token: string | null, opts: { apiUrl: string; fetch
       return { ...summary(r), id: r.id, permissions: r.permissions ?? null };
     },
 
-    async collaboratorRole(repo: string, login: string): Promise<RepoRole> {
-      const body = await json<{ permission?: string; role_name?: string }>(
+    async repoById(id: number): Promise<RepoDetail> {
+      const r = await json<RawRepo>(`/repositories/${Math.trunc(id)}`);
+      return { ...summary(r), id: r.id, permissions: r.permissions ?? null };
+    },
+
+    async collaboratorRole(repo: string, login: string, uid: number): Promise<RepoRole> {
+      const body = await json<{ permission?: string; role_name?: string; user?: { id?: number } }>(
         `/repos/${assertRepo(repo)}/collaborators/${encodeURIComponent(login)}/permission`,
       );
+      if (body.user?.id !== uid) return "none";
       if (body.role_name && ROLE_NAMES.has(body.role_name)) return body.role_name as RepoRole;
       if (body.permission === "admin") return "admin";
       if (body.permission === "write") return "write";
@@ -197,7 +222,7 @@ export function createGitHub(token: string | null, opts: { apiUrl: string; fetch
 
     async readme(repo: string): Promise<string | null> {
       try {
-        return await (await request(`/repos/${assertRepo(repo)}/readme`, "application/vnd.github.raw+json")).text();
+        return await readCapped(await request(`/repos/${assertRepo(repo)}/readme`, "application/vnd.github.raw+json"), MAX_README_BYTES);
       } catch (err) {
         if (err instanceof GitHubError && (err.kind === "not_found" || err.kind === "empty")) return null;
         throw err;
@@ -217,8 +242,8 @@ export function createGitHub(token: string | null, opts: { apiUrl: string; fetch
       );
       return rows.map((r) => ({
         sha: r.sha.slice(0, 7),
-        message: r.commit.message.split(/\r?\n/)[0] ?? "",
-        author: r.commit.author.name,
+        message: (r.commit.message.split(/\r?\n/)[0] ?? "").slice(0, 300),
+        author: r.commit.author.name.slice(0, 100),
         date: r.commit.author.date,
       }));
     },
@@ -268,12 +293,20 @@ function grantFrom(body: Record<string, unknown>, now: number): GitHubGrant | nu
 }
 
 async function tokenRequest(opts: { webUrl: string; fetch?: Fetch; now: number }, params: Record<string, string>): Promise<GitHubGrant> {
-  const res = await (opts.fetch ?? fetch)(`${opts.webUrl}/login/oauth/access_token`, {
-    method: "POST",
-    headers: { accept: "application/json", "content-type": "application/json" },
-    body: JSON.stringify(params),
-    redirect: "manual",
-  });
+  let res: Response;
+  try {
+    res = await (opts.fetch ?? fetch)(`${opts.webUrl}/login/oauth/access_token`, {
+      method: "POST",
+      headers: { accept: "application/json", "content-type": "application/json" },
+      body: JSON.stringify(params),
+      redirect: "manual",
+    });
+  } catch {
+    throw new GitHubError(503, "unavailable", "GitHub could not be reached");
+  }
+  if (res.status >= 500 || res.status === 429) {
+    throw new GitHubError(res.status, res.status === 429 ? "rate_limited" : "unavailable", "GitHub token service unavailable");
+  }
   const body = (await res.json().catch(() => ({}))) as Record<string, unknown>;
   const grant = res.ok ? grantFrom(body, opts.now) : null;
   if (!grant) throw new GitHubError(res.ok ? 401 : res.status, "unauthorized", cleanLine(String(body.error ?? "GitHub token request failed"), 120));

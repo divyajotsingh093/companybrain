@@ -76,14 +76,20 @@ export function createAuth(opts: { config: Config; store: Store; fetch?: Fetch; 
     if (typeof refreshToken !== "string" || !config.githubClientId || !config.githubClientSecret) {
       throw new GitHubError(401, "unauthorized", "GitHub authorization expired");
     }
-    const grant = await refreshGrant({
-      webUrl: config.githubWebUrl,
-      clientId: config.githubClientId,
-      clientSecret: config.githubClientSecret,
-      refreshToken,
-      now: now(),
-      ...(opts.fetch ? { fetch: opts.fetch } : {}),
-    });
+    let grant: GitHubGrant;
+    try {
+      grant = await refreshGrant({
+        webUrl: config.githubWebUrl,
+        clientId: config.githubClientId,
+        clientSecret: config.githubClientSecret,
+        refreshToken,
+        now: now(),
+        ...(opts.fetch ? { fetch: opts.fetch } : {}),
+      });
+    } catch (err) {
+      if (err instanceof GitHubError && err.kind === "unauthorized") store.dropRefresh(uid);
+      throw err;
+    }
     saveGrant(uid, login, grant);
     return grant.accessToken;
   }

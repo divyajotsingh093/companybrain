@@ -19,10 +19,18 @@ function isLocal(url: URL): boolean {
   return url.hostname === "localhost" || url.hostname === "127.0.0.1" || url.hostname === "::1" || url.hostname.endsWith(".test");
 }
 
+function positive(env: NodeJS.ProcessEnv, name: string, fallback: number): number {
+  const raw = env[name];
+  if (raw === undefined || raw === "") return fallback;
+  const value = Number(raw);
+  if (!Number.isFinite(value) || value <= 0) throw new Error(`${name} must be a positive number`);
+  return value;
+}
+
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
   const secret = env.BOARD_SECRET ?? "";
   if (secret.length < 32) throw new Error("BOARD_SECRET must be at least 32 characters; generate one with openssl rand -base64 48");
-  const port = Number(env.PORT ?? 8787);
+  const port = positive(env, "PORT", 8787);
   const githubClientId = env.GITHUB_CLIENT_ID || undefined;
   const githubClientSecret = env.GITHUB_CLIENT_SECRET || undefined;
   if (githubClientId && !env.PUBLIC_URL) throw new Error("PUBLIC_URL is required when GitHub sign-in is configured");
@@ -38,9 +46,9 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     githubClientSecret,
     githubApiUrl: (env.GITHUB_API_URL ?? "https://api.github.com").replace(/\/+$/, ""),
     githubWebUrl: (env.GITHUB_WEB_URL ?? "https://github.com").replace(/\/+$/, ""),
-    accessTtlMs: Number(env.BOARD_ACCESS_TTL_MS ?? 60_000),
-    agentTokenTtlMs: Number(env.BOARD_TOKEN_TTL_DAYS ?? 30) * DAY_MS,
-    sessionTtlMs: Number(env.BOARD_SESSION_TTL_DAYS ?? 14) * DAY_MS,
-    requestsPerMinute: Number(env.BOARD_REQUESTS_PER_MINUTE ?? 120),
+    accessTtlMs: positive(env, "BOARD_ACCESS_TTL_MS", 60_000),
+    agentTokenTtlMs: positive(env, "BOARD_TOKEN_TTL_DAYS", 30) * DAY_MS,
+    sessionTtlMs: positive(env, "BOARD_SESSION_TTL_DAYS", 14) * DAY_MS,
+    requestsPerMinute: positive(env, "BOARD_REQUESTS_PER_MINUTE", 120),
   };
 }

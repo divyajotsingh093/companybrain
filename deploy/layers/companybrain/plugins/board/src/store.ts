@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { posix } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 
 export const POST_TYPES = ["task", "claim", "finding", "handoff"] as const;
@@ -8,6 +9,10 @@ export const AGENT_POST_TYPES = ["claim", "finding", "handoff"] as const;
 export const MAX_CLAIM_MINUTES = 480;
 export const DEFAULT_CLAIM_MINUTES = 60;
 export const POSTS_PER_HOUR = 60;
+export const POSTS_PER_USER_PER_HOUR = 200;
+export const ACTIVE_AGENT_TOKENS_PER_USER = 20;
+export const MAX_POSTS_PER_REPO = 5_000;
+const RETAIN_POSTS_MS = 180 * 24 * 3_600_000;
 export const ACTIVE_CLAIMS_PER_USER = 10;
 const HOUR_MS = 3_600_000;
 const RETAIN_EXPIRED_MS = 7 * 24 * HOUR_MS;
@@ -80,12 +85,10 @@ export interface CredentialRow {
 }
 
 export function normaliseTarget(target: string): string {
-  return target
-    .trim()
-    .replace(/\\/g, "/")
-    .replace(/\/{2,}/g, "/")
-    .replace(/^(\.\/)+/, "")
-    .replace(/\/$/, "");
+  const cleaned = target.trim().replace(/\\/g, "/");
+  if (!cleaned.includes("/")) return cleaned;
+  const normal = posix.normalize(`/${cleaned}`);
+  return normal.replace(/^\/+/, "").replace(/\/+$/, "");
 }
 
 interface PostRow {
@@ -227,6 +230,10 @@ export function openStore(path: string, now: () => number = Date.now) {
           .prepare(`SELECT COUNT(*) AS n FROM posts WHERE repo_id = ? AND author_uid = ? AND created_at > ?`)
           .get(p.repoId, p.authorUid, createdAt - HOUR_MS) as { n: number };
         if (recent.n >= POSTS_PER_HOUR) return { ok: false, reason: "post_quota" } as const;
+        const everywhere = db
+          .prepare(`SELECT COUNT(*) AS n FROM posts WHERE author_uid = ? AND created_at > ?`)
+          .get(p.authorUid, createdAt - HOUR_MS) as { n: number };
+        if (everywhere.n >= POSTS_PER_USER_PER_HOUR) return { ok: false, reason: "post_quota" } as const;
       }
       let target = p.target ?? null;
       let expiresAt: number | null = null;
@@ -371,13 +378,43 @@ export function openStore(path: string, now: () => number = Date.now) {
     };
   }
 
+  function dropRefresh(uid: number): void {
+    db.prepare(`UPDATE credentials SET refresh_sealed = NULL, refresh_expires_at = NULL WHERE uid = ?`).run(uid);
+  }
+
+  function deleteCredential(uid: number): void {
+    db.prepare(`DELETE FROM credentials WHERE uid = ?`).run(uid);
+  }
+
+  function countActiveAgentTokens(uid: number): number {
+    return (
+      db.prepare(`SELECT COUNT(*) AS n FROM tokens WHERE uid = ? AND kind = 'agent' AND revoked_at IS NULL AND expires_at > ?`).get(uid, now()) as {
+        n: number;
+      }
+    ).n;
+  }
+
   function purge(): { posts: number; tokens: number } {
-    const cutoff = now() - RETAIN_EXPIRED_MS;
-    const posts = db
-      .prepare(`DELETE FROM posts WHERE type = 'claim' AND (released_at < ? OR (released_at IS NULL AND expires_at < ?))`)
-      .run(cutoff, cutoff).changes;
+    const t = now();
+    const cutoff = t - RETAIN_EXPIRED_MS;
+    let posts = Number(
+      db.prepare(`DELETE FROM posts WHERE type = 'claim' AND (released_at < ? OR (released_at IS NULL AND expires_at < ?))`).run(cutoff, cutoff).changes,
+    );
+    posts += Number(db.prepare(`DELETE FROM posts WHERE type IN ('finding', 'handoff') AND created_at < ?`).run(t - RETAIN_POSTS_MS).changes);
+    posts += Number(
+      db
+        .prepare(
+          `DELETE FROM posts WHERE type IN ('finding', 'handoff') AND id IN (
+             SELECT id FROM (
+               SELECT id, ROW_NUMBER() OVER (PARTITION BY repo_id ORDER BY created_at DESC, id DESC) AS rank
+               FROM posts WHERE type IN ('finding', 'handoff')
+             ) WHERE rank > ?
+           )`,
+        )
+        .run(MAX_POSTS_PER_REPO).changes,
+    );
     const tokens = db.prepare(`DELETE FROM tokens WHERE revoked_at < ? OR expires_at < ?`).run(cutoff, cutoff).changes;
-    return { posts: Number(posts), tokens: Number(tokens) };
+    return { posts, tokens: Number(tokens) };
   }
 
   return {
@@ -390,10 +427,13 @@ export function openStore(path: string, now: () => number = Date.now) {
     tokenByHash,
     touchToken,
     activeTokens,
+    countActiveAgentTokens,
     revokeToken,
     revokeAllTokens,
     saveCredential,
     credential,
+    dropRefresh,
+    deleteCredential,
     purge,
     close: () => db.close(),
   };

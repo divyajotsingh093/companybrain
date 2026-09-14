@@ -13,7 +13,7 @@ const auth = createAuth({ config, store });
 const githubFor = (token: string) => createGitHub(token, { apiUrl: config.githubApiUrl });
 const access = createAccessChecker({
   ttlMs: config.accessTtlMs,
-  resolve: async (uid, login, repo) => resolveRepoAccess(githubFor(await auth.githubToken(uid)), login, repo),
+  resolve: async (uid, login, repo) => resolveRepoAccess(githubFor(await auth.githubToken(uid)), uid, login, repo),
 });
 const limiter = createRateLimiter({ limit: config.requestsPerMinute, windowMs: 60_000 });
 

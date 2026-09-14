@@ -24,12 +24,12 @@ export function canModerate(role: RepoRole): boolean {
   return MODERATOR_ROLES.has(role);
 }
 
-export async function resolveRepoAccess(github: GitHubClient, login: string, repo: string): Promise<RepoAccess> {
+export async function resolveRepoAccess(github: GitHubClient, uid: number, login: string, repo: string): Promise<RepoAccess> {
   const detail = await github.repo(repo);
   let role = roleFromPermissions(detail.permissions);
   if (!canUseBoard(role)) {
     try {
-      role = await github.collaboratorRole(detail.fullName, login);
+      role = await github.collaboratorRole(detail.fullName, login, uid);
     } catch (err) {
       if (!(err instanceof GitHubError) || !DEFINITIVE_KINDS.has(err.kind)) throw err;
     }

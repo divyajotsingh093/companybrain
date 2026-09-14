@@ -40,9 +40,15 @@ export function parseBacklog(source: string, markdown: string): BacklogTask[] {
   return tasks.map((t) => ({ ...t, body: t.body.trim() }));
 }
 
+const [major = 0, minor = 0] = process.versions.node.split(".").map(Number);
+if (major < 24 || (major === 24 && minor < 2)) {
+  console.error("import-backlog needs Node 24.2 or later");
+  process.exit(2);
+}
+
 if (import.meta.main) {
   const [repoArg, ...files] = process.argv.slice(2);
-  if (!repoArg || !files.length) {
+  if (!repoArg || !files.length || !process.env.BOARD_DB_PATH) {
     console.error("usage: BOARD_DB_PATH=<server database> node scripts/import-backlog.ts <owner/repo> <backlog.md>...");
     console.error("Run it on the server host against the same database the service uses. Set GITHUB_TOKEN for private repositories.");
     process.exit(2);
@@ -50,7 +56,7 @@ if (import.meta.main) {
   const repo = await createGitHub(process.env.GITHUB_TOKEN ?? null, {
     apiUrl: (process.env.GITHUB_API_URL ?? "https://api.github.com").replace(/\/+$/, ""),
   }).repo(assertRepo(repoArg));
-  const store = openStore(process.env.BOARD_DB_PATH ?? "board.db");
+  const store = openStore(process.env.BOARD_DB_PATH);
   let added = 0;
   let skipped = 0;
   for (const file of files) {

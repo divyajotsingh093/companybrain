@@ -83,7 +83,8 @@ export function createBoardServer(deps: BoardDeps): McpServer {
     } catch (err) {
       if (err instanceof BoardDenied) return failure(NO_BOARD);
       if (err instanceof GitHubError) return failure(describeError(err, publicUrl));
-      throw err;
+      console.error(`board tool error: ${err instanceof Error ? err.name : typeof err}`);
+      return failure("Something went wrong on the board server. Try again shortly.");
     }
   }
 
@@ -291,7 +292,14 @@ export function createBoardServer(deps: BoardDeps): McpServer {
       guard(async () => {
         const post = store.getPost(post_id);
         if (!post || post.type !== "claim") return failure("No claim with that id.");
-        const a = await boardAccess(post.repoName);
+        let current: string;
+        try {
+          current = (await (await deps.github()).repoById(post.repoId)).fullName;
+        } catch (err) {
+          if (err instanceof GitHubError && (err.kind === "not_found" || err.kind === "forbidden")) throw new BoardDenied();
+          throw err;
+        }
+        const a = await boardAccess(current);
         if (a.repoId !== post.repoId) throw new BoardDenied();
         const own = post.authorUid === principal.uid && post.client === principal.client;
         if (!own && !canModerate(a.role)) return failure("Only the claimant, or a maintainer or admin, can release this claim.");
