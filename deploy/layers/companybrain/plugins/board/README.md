@@ -85,7 +85,7 @@ they want their agents to see; organisation repositories need the app installed 
 | `BOARD_DB_PATH` | SQLite database; needs a persistent disk |
 | `BOARD_ACCESS_TTL_MS` | Access cache lifetime |
 | `BOARD_TOKEN_TTL_DAYS`, `BOARD_SESSION_TTL_DAYS` | Token lifetimes |
-| `BOARD_REQUESTS_PER_MINUTE` | Per-token request limit |
+| `BOARD_REQUESTS_PER_MINUTE` | Request limit per user, shared across that user's tokens |
 | `PORT` | Listen port, default 8787 |
 
 The board runs as a single instance with a persistent volume. Serverless platforms without a
