@@ -28,6 +28,7 @@ explicitly disavowed artifact.
 | **Hyper** (YC Spring 2026) | Self-maintaining knowledge graph over Notion, email, Slack, GitHub, Cursor and Claude Code sessions; infuses context into existing AI tools per chat turn | 2 people; $1k MRR and 50+ teams within 12 days of launch; paid pilots with Razorpay and Snorkel AI |
 | **Memory Store** (YC S26) | "One memory for your team's agents" over meetings, Claude sessions, Slack | Founders previously built Julep AI |
 | **Cerenovus / Savant** | Markdown knowledge graphs of workflows; undocumented procedures captured as agent skills | Pilots |
+| **Sim** (YC, Apache 2.0 core) | Visual agent-workflow builder whose separate Search product checks source access per request, with per-user OAuth and an MCP server ([analysis](../docs/analysis/sim.md)) | ~29.7k stars; $7M Series A; permission-aware MCP retrieval is already shipping, so our edge is governed skills, approvals and multiplayer scope, not search |
 
 Above them sit the scaled incumbents already surveyed: Glean (~$300M ARR), Dust ($40M Series B),
 Engram ($98M Series A).

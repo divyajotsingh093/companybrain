@@ -73,3 +73,11 @@ Product work specific to Company Brain: the knowledge substrate, ACL mirroring, 
 - **Why:** Two cheap, enforceable mechanics that add to the known provenance and write-back learnings. The clean-context verifier, bitemporal facts and entity resolution were dropped as unproven or already on the roadmap.
 - **Sources:** Competitors stream: Cerenovus llms-full.txt (narrowed by critic)
 - **Repo paths:** `adrs/0004-skills-not-search.md`, `docs/architecture.md`
+
+## 10. Denied reads offer an access request, never a silent miss
+
+- **Effort:** M · **H0:** supports · **Upstreamable:** no
+- **Change:** When the retrieval predicate (#1) withholds a source the asker would need, the answer says that something was withheld without revealing what, and offers an access request routed to the source's approver through the existing approval path. Approval grants source access; it never grants document visibility directly (#5).
+- **Why:** Sim ships access requests alongside permission-aware Search. Without it, a governed brain looks worse than an ungoverned one: answers silently miss. Build it ourselves; Sim's implementation is in its restrictively licensed `ee/` directory.
+- **Sources:** Competitors stream: Sim v0.8.40-47 access requests ([analysis](../analysis/sim.md))
+- **Repo paths:** `src/acl/acl-store.ts`, `docs/architecture.md`

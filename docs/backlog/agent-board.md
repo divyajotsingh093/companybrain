@@ -132,6 +132,10 @@ along them; agents sit beside the skill they're running; claims show a halo with
 ring; a skill going live lights up in the tree. Streamed over SSE from core. Honours
 `prefers-reduced-motion`. **Effort M.**
 
+Event vocabulary follows Sim's `agent-events-v1` ([analysis](../analysis/sim.md)): small typed
+frames, and tool events carry no arguments or results, which keeps untrusted content off the
+wire (#16). The board service's durable event log is the first source for these frames.
+
 ### 12. Swimlane timeline
 One lane per agent client and one for humans, with handoffs drawn between lanes. The fastest way
 to see who did what, in order. **Effort M.**

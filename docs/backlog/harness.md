@@ -47,7 +47,7 @@ Capabilities of the qm agent harness itself. Items marked upstreamable are gener
 - **Effort:** L · **H0:** blocking · **Upstreamable:** yes
 - **Change:** Add an envelope approval: {envelopeId, skillId, purpose, actions[{tool|approvalKey, mode: auto|per_run|draft}], expiresAt, state}, confirmed once at invocation or at trigger creation. authorizeToolCall allows auto, routes per_run to a per-call approval, turns draft into a proposed diff, and sends out-of-envelope calls to scope expansion. Preflight the skill's declared credentials against the invoking actor before the run. Stamp envelopeId on audit.
 - **Why:** H0.4 needs governed execution without an approval per tool call, and without handing a skill everything the actor ever approved. Today grants are per-command with no purpose, action set or TTL, and requiredCapabilities are checked only at publish.
-- **Sources:** Governance stream: Clawvisor task envelope (ARCHITECTURE.md); Competitors stream: Hyper 1.5.0 Draft/Automatic/Per-run action manifest; Knowledge stream: Mainmind run_start provider preflight (preflight part)
+- **Sources:** Governance stream: Clawvisor task envelope (ARCHITECTURE.md); Competitors stream: Hyper 1.5.0 Draft/Automatic/Per-run action manifest; Knowledge stream: Mainmind run_start provider preflight (preflight part); Sim permission groups halt a run when it reaches a disallowed block, confirming enforcement at call time (add a test that a mid-run grant revocation stops the next call)
 - **Repo paths:** `src/types.ts`, `src/core/orchestrator.ts`, `src/triggers/trigger-store.ts`, `src/skills/skill-store.ts`, `src/wiring.ts`
 
 ## 7. Park and resume approvals inside trigger and cron runs
@@ -89,3 +89,11 @@ Capabilities of the qm agent harness itself. Items marked upstreamable are gener
 - **Why:** Nothing today says whose permissions apply when a skill reads knowledge. Gumloop documents that attaching knowledge to an agent is a sharing decision that bypasses per-user source scope.
 - **Sources:** Governance stream: Gumloop how-do-agents-use-brain.md
 - **Repo paths:** `src/skills/frontmatter.ts`, `src/types.ts`, `src/api/app-skills.ts`
+
+## 12. Runs pin an immutable skill version; rollback promotes an earlier one
+
+- **Effort:** M · **H0:** supports · **Upstreamable:** yes
+- **Change:** Publishing a skill creates an immutable numbered version. Every run records the version it executed, and the run receipt (#9) links to that exact version. Rollback promotes an earlier version instead of editing in place. Traces store per-step input, output, cost and error.
+- **Why:** Sim freezes a snapshot of each workflow run and versions deployments, but its SKILL.md skills are unversioned. A governed CRM action is only auditable if we can say which skill text produced it. Also extends #7: a parked run resumes on the version it started with, and approval-form fields become inputs to later steps, as in Sim's human-in-the-loop block.
+- **Sources:** Competitors stream: Sim logs and deployment docs, human-in-the-loop block ([analysis](../analysis/sim.md))
+- **Repo paths:** `src/skills/skill-store.ts`, `src/runs/run-store.ts`, `src/runs/tool-ledger.ts`
