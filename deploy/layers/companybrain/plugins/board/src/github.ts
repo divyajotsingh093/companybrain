@@ -292,6 +292,8 @@ function grantFrom(body: Record<string, unknown>, now: number): GitHubGrant | nu
   };
 }
 
+const TOKEN_TIMEOUT_MS = 10_000;
+
 async function tokenRequest(opts: { webUrl: string; fetch?: Fetch; now: number }, params: Record<string, string>): Promise<GitHubGrant> {
   let res: Response;
   try {
@@ -300,6 +302,7 @@ async function tokenRequest(opts: { webUrl: string; fetch?: Fetch; now: number }
       headers: { accept: "application/json", "content-type": "application/json" },
       body: JSON.stringify(params),
       redirect: "manual",
+      signal: AbortSignal.timeout(TOKEN_TIMEOUT_MS),
     });
   } catch {
     throw new GitHubError(503, "unavailable", "GitHub could not be reached");

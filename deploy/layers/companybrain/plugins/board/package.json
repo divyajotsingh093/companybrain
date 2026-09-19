@@ -4,21 +4,25 @@
   "private": true,
   "type": "module",
   "engines": {
-    "node": ">=24.2.0"
+    "node": "24.x"
   },
   "scripts": {
-    "start": "node src/server.ts",
+    "start": "node scripts/serve.ts",
     "test": "node --test --test-timeout=30000 test/*.test.ts",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
     "@hono/node-server": "^2.1.1",
     "@modelcontextprotocol/sdk": "^1.30.0",
+    "@vercel/functions": "^3.9.7",
     "hono": "^4.13.7",
+    "pg": "^8.23.0",
     "zod": "^4.6.5"
   },
   "devDependencies": {
+    "@electric-sql/pglite": "^0.5.8",
     "@types/node": "^26.5.1",
+    "@types/pg": "^8.23.1",
     "typescript": "^7.0.2"
   }
 }

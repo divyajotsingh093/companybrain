@@ -1,6 +1,7 @@
 import { createAuth } from "../src/auth.ts";
 import { loadConfig } from "../src/config.ts";
 import { createGitHub } from "../src/github.ts";
+import { createPool, postgres } from "../src/db.ts";
 import { openStore } from "../src/store.ts";
 import { AGENT_CLIENTS, isAgentClient } from "../src/token.ts";
 
@@ -14,10 +15,12 @@ if (!isAgentClient(client) || !githubToken) {
 }
 
 const config = loadConfig();
-const store = openStore(config.dbPath);
+if (!config.databaseUrl) throw new Error("DATABASE_URL is required");
+const store = openStore(postgres(createPool(config.databaseUrl)));
 const auth = createAuth({ config, store });
 const viewer = await createGitHub(githubToken, { apiUrl: config.githubApiUrl }).viewer();
-auth.saveGrant(viewer.id, viewer.login, { accessToken: githubToken, expiresAt: null, refreshToken: null, refreshExpiresAt: null });
-const issued = auth.issue(viewer.id, "agent", client, config.agentTokenTtlMs);
-store.close();
+await auth.saveGrant(viewer.id, viewer.login, { accessToken: githubToken, expiresAt: null, refreshToken: null, refreshExpiresAt: null });
+const issued = await auth.issue(viewer.id, "agent", client, config.agentTokenTtlMs);
+if (!issued) throw new Error("this account already has the maximum number of active agent tokens");
+await store.close();
 process.stdout.write(issued.token);

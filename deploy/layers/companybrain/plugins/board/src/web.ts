@@ -1,4 +1,4 @@
-import type { Board, Post, TokenRow } from "./store.ts";
+import type { AuditEntry, Board, BoardEvent, Post, TokenRow } from "./store.ts";
 import { AGENT_CLIENTS, type AgentClient } from "./token.ts";
 
 export function escapeHtml(value: string): string {
@@ -18,33 +18,102 @@ export function isErrorCode(value: string | undefined): value is ErrorCode {
 }
 
 const STYLE = `
-  :root { --rail:#0f172a; --ink:#0f172a; --muted:#64748b; --line:#e2e8f0; --accent-text:#c2410c; --bg:#ffffff; --wash:#fff7ed; }
-  @media (prefers-color-scheme: dark) { :root { --ink:#e2e8f0; --muted:#94a3b8; --line:#262b33; --bg:#0b0f16; --wash:#1c1410; --accent-text:#fdba74; } }
+  :root { color-scheme:dark; --bg:#0b1120; --panel:#111a2e; --panel-2:#172238; --line:#26324a; --ink:#f1f5f9; --muted:#94a3b8;
+          --accent:#22c55e; --accent-ink:#052e16; --warn:#f59e0b; --info:#38bdf8; --danger:#f87171;
+          --mono:ui-monospace,"JetBrains Mono","SF Mono",Menlo,Consolas,monospace;
+          --sans:"IBM Plex Sans",ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif; }
   * { box-sizing:border-box; }
-  body { margin:0; font:15px/1.55 ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif; color:var(--ink);
-         background:radial-gradient(circle at 100% 0%, var(--wash) 0%, var(--bg) 45%); min-height:100vh; }
-  header { background:var(--rail); color:#e2e8f0; padding:14px 28px; display:flex; align-items:center; gap:10px; }
-  .mark { width:22px; height:22px; border-radius:6px; background:linear-gradient(135deg,#f97316,#fb923c); }
-  main { max-width:880px; margin:0 auto; padding:32px 28px 64px; }
-  h1 { font-size:26px; margin:0 0 6px; } h2 { font-size:17px; margin:28px 0 8px; }
-  .eyebrow { font-size:11px; font-weight:600; letter-spacing:.06em; text-transform:uppercase; color:var(--accent-text); }
+  body { margin:0; font:16px/1.6 var(--sans); color:var(--ink); background:var(--bg); min-height:100vh; }
+  a { color:var(--accent); }
+  :focus-visible { outline:2px solid var(--accent); outline-offset:2px; border-radius:6px; }
+  header { border-bottom:1px solid var(--line); background:rgba(11,17,32,.92); position:sticky; top:0; z-index:1; }
+  .bar { max-width:1180px; margin:0 auto; padding:12px 24px; display:flex; align-items:center; gap:12px; }
+  .brand { display:flex; align-items:center; gap:10px; color:var(--ink); text-decoration:none; font:600 15px var(--mono); }
+  .brand svg { color:var(--accent); }
+  .spacer { flex:1; }
+  main { max-width:1180px; margin:0 auto; padding:40px 24px 80px; }
+  .narrow { max-width:760px; }
+  h1 { font:700 clamp(26px,4vw,38px)/1.2 var(--mono); letter-spacing:-.02em; margin:0 0 12px; text-wrap:balance; overflow-wrap:anywhere; }
+  h2 { font:600 15px var(--mono); text-transform:uppercase; letter-spacing:.08em; color:var(--muted); margin:40px 0 14px; }
+  h3 { font-size:16px; margin:0; }
+  p { margin:0 0 14px; }
+  .lede { font-size:18px; color:var(--muted); max-width:62ch; }
   .muted { color:var(--muted); }
-  .button { display:inline-block; background:linear-gradient(135deg,#ea580c,#f97316); color:#1a0a02; font-weight:600;
-            padding:9px 16px; border-radius:10px; text-decoration:none; border:0; cursor:pointer; font-size:14px; }
-  .quiet { background:transparent; color:var(--ink); border:1px solid var(--line); }
-  pre { background:#0b1020; color:#e2e8f0; padding:12px 14px; border-radius:10px; overflow-x:auto; font-size:12.5px; white-space:pre-wrap; word-break:break-all; }
-  .card { border:1px solid var(--line); border-radius:12px; padding:14px 16px; margin:10px 0; }
-  .chip { display:inline-block; font-size:11px; padding:2px 9px; border-radius:999px; background:#fed7aa; color:#431407; font-weight:600; margin-right:6px; }
-  .body { white-space:pre-wrap; margin-top:8px; }
-  .row { display:flex; gap:10px; align-items:center; flex-wrap:wrap; }
-  table { width:100%; border-collapse:collapse; font-size:14px; } td, th { text-align:left; padding:6px 8px; border-bottom:1px solid var(--line); }
-  form { display:inline; }
+  .small { font-size:13px; }
+  .eyebrow { font:600 12px var(--mono); letter-spacing:.1em; text-transform:uppercase; color:var(--accent); margin-bottom:10px; }
+  code, pre { font-family:var(--mono); }
+  code { background:var(--panel-2); padding:1px 6px; border-radius:6px; font-size:.9em; }
+  pre { background:#060b16; border:1px solid var(--line); color:#e2e8f0; padding:16px; border-radius:10px; overflow-x:auto;
+        font-size:13px; line-height:1.55; white-space:pre-wrap; word-break:break-all; margin:0; }
+  .button { display:inline-flex; align-items:center; justify-content:center; gap:8px; min-height:44px; padding:0 18px;
+            background:var(--accent); color:var(--accent-ink); font:600 15px var(--sans); border:1px solid var(--accent);
+            border-radius:10px; text-decoration:none; cursor:pointer; transition:background-color .15s, border-color .15s, color .15s; }
+  .button:hover { background:#4ade80; border-color:#4ade80; }
+  .quiet { background:transparent; color:var(--ink); border-color:var(--line); }
+  .quiet:hover { background:var(--panel-2); border-color:var(--muted); }
+  .danger { color:var(--danger); }
+  .danger:hover { border-color:var(--danger); background:rgba(248,113,113,.08); }
+  .row { display:flex; gap:12px; align-items:center; flex-wrap:wrap; }
+  form { margin:0; }
+  .panel { background:var(--panel); border:1px solid var(--line); border-radius:14px; padding:20px; }
+  .notice { border-left:3px solid var(--warn); background:rgba(245,158,11,.08); padding:12px 16px; border-radius:8px; margin:16px 0; }
+  .notice.error { border-color:var(--danger); background:rgba(248,113,113,.08); }
+  .steps { list-style:none; padding:0; margin:36px 0 0; display:grid; gap:16px; grid-template-columns:repeat(auto-fit,minmax(220px,1fr)); counter-reset:step; }
+  .steps li { counter-increment:step; }
+  .steps li::before { content:counter(step,decimal-leading-zero); display:block; font:600 13px var(--mono); color:var(--accent); margin-bottom:8px; }
+  .clients { display:grid; gap:14px; grid-template-columns:repeat(auto-fit,minmax(230px,1fr)); }
+  .client { display:flex; flex-direction:column; gap:12px; }
+  .client p { font-size:14px; color:var(--muted); flex:1; margin:0; }
+  .client .button { width:100%; }
+  .table-wrap { overflow-x:auto; border:1px solid var(--line); border-radius:12px; }
+  table { width:100%; border-collapse:collapse; font-size:14px; min-width:560px; }
+  th { font:600 12px var(--mono); text-transform:uppercase; letter-spacing:.06em; color:var(--muted); background:var(--panel); }
+  td, th { text-align:left; padding:10px 14px; border-bottom:1px solid var(--line); vertical-align:middle; }
+  tr:last-child td { border-bottom:0; }
+  label { display:block; font-weight:600; font-size:14px; margin-bottom:6px; }
+  input[type=text] { min-height:44px; flex:1; min-width:220px; padding:0 14px; border-radius:10px; border:1px solid var(--line);
+                     background:#060b16; color:var(--ink); font:15px var(--mono); }
+  .stats { display:flex; gap:10px; flex-wrap:wrap; margin:20px 0 0; }
+  .stat { font:600 13px var(--mono); padding:6px 12px; border-radius:999px; border:1px solid var(--line); background:var(--panel); }
+  .stat b { color:var(--ink); } .stat { color:var(--muted); }
+  .columns { display:grid; gap:18px; grid-template-columns:repeat(3,minmax(0,1fr)); margin-top:28px; align-items:start; }
+  @media (max-width:980px) { .columns { grid-template-columns:1fr; } }
+  .column { background:var(--panel); border:1px solid var(--line); border-radius:14px; padding:14px; }
+  .column > h2 { margin:4px 6px 14px; display:flex; justify-content:space-between; }
+  .post { background:var(--panel-2); border:1px solid var(--line); border-radius:10px; padding:12px 14px; margin-top:10px; }
+  .post:first-of-type { margin-top:0; }
+  .post summary { cursor:pointer; list-style:none; }
+  .post summary::-webkit-details-marker { display:none; }
+  .post summary:hover .title { color:var(--accent); }
+  .title { font-weight:600; font-size:15px; line-height:1.4; transition:color .15s; overflow-wrap:anywhere; }
+  .meta { display:block; font-size:12.5px; color:var(--muted); margin-top:6px; font-family:var(--mono); overflow-wrap:anywhere; }
+  .body { white-space:pre-wrap; font-size:14px; margin-top:10px; padding-top:10px; border-top:1px solid var(--line); overflow-wrap:anywhere; }
+  .tag { display:inline-block; font:600 11px var(--mono); text-transform:uppercase; letter-spacing:.06em; padding:2px 8px;
+         border-radius:6px; margin-right:8px; vertical-align:2px; border:1px solid currentColor; }
+  .tag.task { color:var(--muted); } .tag.claim { color:var(--warn); } .tag.finding { color:var(--info); } .tag.handoff { color:var(--accent); }
+  .timeline { list-style:none; margin:0; padding:0; border-left:2px solid var(--line); }
+  .timeline li { display:grid; grid-template-columns:max-content 130px 1fr; gap:12px; align-items:baseline; padding:10px 0 10px 18px; position:relative; font-size:14px; }
+  .timeline li::before { content:""; position:absolute; left:-6px; top:16px; width:10px; height:10px; border-radius:50%; background:var(--panel-2); border:2px solid var(--muted); }
+  .timeline time { font:12.5px var(--mono); color:var(--muted); }
+  .timeline .title { font-weight:400; color:var(--muted); }
+  .lane { font:600 12px var(--mono); padding:2px 8px; border-radius:6px; border:1px solid var(--line); justify-self:start; color:var(--muted); }
+  .lane.claude_code { color:#fb923c; } .lane.codex { color:var(--info); } .lane.cursor { color:#c084fc; } .lane.grok { color:var(--accent); }
+  @media (max-width:640px) { .timeline li { grid-template-columns:1fr; gap:4px; } }
+  .empty { color:var(--muted); font-size:14px; padding:16px 6px; }
+  .center { min-height:60vh; display:grid; place-items:center; text-align:center; }
+  .center .panel { max-width:520px; padding:32px; }
+  @media (prefers-reduced-motion: reduce) { * { transition:none !important; } }
 `;
 
-function page(title: string, content: string): string {
+const LOGO = `<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="6" cy="6" r="2.5"/><circle cx="18" cy="6" r="2.5"/><circle cx="12" cy="18" r="2.5"/><path d="M8.2 7.2 10.8 15.8M15.8 7.2 13.2 15.8M8.5 6h7"/></svg>`;
+const GITHUB = `<svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 .5a11.5 11.5 0 0 0-3.64 22.41c.58.1.79-.25.79-.56v-2c-3.2.7-3.88-1.37-3.88-1.37-.52-1.33-1.28-1.69-1.28-1.69-1.04-.71.08-.7.08-.7 1.15.08 1.76 1.19 1.76 1.19 1.03 1.76 2.69 1.25 3.35.96.1-.75.4-1.25.73-1.54-2.55-.29-5.24-1.28-5.24-5.69 0-1.26.45-2.28 1.19-3.09-.12-.29-.52-1.46.11-3.05 0 0 .97-.31 3.17 1.18a11 11 0 0 1 5.78 0c2.2-1.49 3.17-1.18 3.17-1.18.63 1.59.23 2.76.11 3.05.74.81 1.19 1.83 1.19 3.09 0 4.42-2.69 5.4-5.25 5.68.41.36.78 1.06.78 2.14v3.17c0 .31.21.67.8.56A11.5 11.5 0 0 0 12 .5Z"/></svg>`;
+
+function page(title: string, content: string, opts: { signedIn?: boolean; narrow?: boolean } = {}): string {
+  const nav = opts.signedIn ? `<form method="post" action="/auth/logout"><button class="button quiet" type="submit">Sign out</button></form>` : "";
   return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>${escapeHtml(title)}</title><style>${STYLE}</style></head>
-<body><header><span class="mark"></span><strong>Company Brain</strong><span class="muted">&nbsp;board</span></header><main>${content}</main></body></html>`;
+<body><header><div class="bar"><a class="brand" href="/">${LOGO}<span>companybrain<span class="muted">/board</span></span></a><span class="spacer"></span>${nav}</div></header>
+<main${opts.narrow ? ' class="narrow"' : ""}>${content}</main></body></html>`;
 }
 
 const CLIENT_LABELS: Record<AgentClient, string> = {
@@ -52,6 +121,13 @@ const CLIENT_LABELS: Record<AgentClient, string> = {
   codex: "Codex",
   cursor: "Cursor",
   grok: "Grok (xAI API)",
+};
+
+const CLIENT_NOTES: Record<AgentClient, string> = {
+  claude_code: "One command: claude mcp add over streamable HTTP.",
+  codex: "A config.toml entry plus a token in the environment.",
+  cursor: "An mcp.json entry with a bearer header.",
+  grok: "A remote MCP tool for the xAI Responses API.",
 };
 
 export function connectionSnippet(client: AgentClient, mcpUrl: string, token: string): string {
@@ -69,14 +145,20 @@ export function connectionSnippet(client: AgentClient, mcpUrl: string, token: st
 
 export function renderHome(opts: { githubConfigured: boolean; error?: ErrorCode }): string {
   const action = opts.githubConfigured
-    ? `<a class="button" href="/auth/github/start">Connect GitHub</a>`
+    ? `<a class="button" href="/auth/github/start">${GITHUB}Connect GitHub</a>`
     : `<p class="muted">GitHub sign-in is not configured on this server yet.</p>`;
-  const error = opts.error ? `<div class="card"><strong>Sign-in failed.</strong> ${escapeHtml(ERROR_MESSAGES[opts.error])}</div>` : "";
+  const error = opts.error ? `<div class="notice error" role="alert"><strong>Sign-in failed.</strong> ${escapeHtml(ERROR_MESSAGES[opts.error])}</div>` : "";
   return page(
     "Company Brain board",
-    `<div class="eyebrow">For agents</div><h1>Give your agents your repositories and a shared board</h1>
-<p class="muted">Sign in with GitHub, then add the board to Claude Code, Codex, Cursor or Grok. Agents read code through your own GitHub
-access and coordinate on a board per repository: tasks, claims, findings and handoffs.</p>${error}<p>${action}</p>`,
+    `<div class="eyebrow">Remote MCP for coding agents</div>
+<h1>One board where your agents share context and split the work</h1>
+<p class="lede">Claude Code, Codex, Cursor and Grok read your repositories through your own GitHub access, then claim tasks, record findings and hand off work on a board per repository.</p>
+${error}<div class="row">${action}</div>
+<ol class="steps">
+<li class="panel"><h3>Connect GitHub</h3><p class="muted small">Install the app on the repositories you choose. Read-only: contents and metadata.</p></li>
+<li class="panel"><h3>Create an agent token</h3><p class="muted small">One token per agent, shown once, expiring and revocable.</p></li>
+<li class="panel"><h3>Agents coordinate</h3><p class="muted small">Claims prevent duplicate work; findings and handoffs carry context between sessions.</p></li>
+</ol>`,
   );
 }
 
@@ -84,70 +166,122 @@ function when(ms: number | null): string {
   return ms ? new Date(ms).toISOString().replace("T", " ").slice(0, 16) + " UTC" : "never";
 }
 
-export function renderConnected(opts: { login: string; tokens: TokenRow[] }): string {
+export function renderConnected(opts: { login: string; tokens: TokenRow[]; activity: AuditEntry[] }): string {
   const create = AGENT_CLIENTS.map(
-    (c) => `<form method="post" action="/tokens"><input type="hidden" name="client" value="${c}"><button class="button" type="submit">${CLIENT_LABELS[c]}</button></form>`,
+    (c) => `<form method="post" action="/tokens" class="panel client"><h3>${CLIENT_LABELS[c]}</h3><p>${CLIENT_NOTES[c]}</p>
+<input type="hidden" name="client" value="${c}"><button class="button" type="submit">Create ${CLIENT_LABELS[c]} token</button></form>`,
   ).join("");
   const rows = opts.tokens
     .map(
       (t) => `<tr><td>${escapeHtml(CLIENT_LABELS[t.client as AgentClient] ?? t.client)}</td><td>${when(t.createdAt)}</td><td>${when(t.lastUsedAt)}</td><td>${when(t.expiresAt)}</td>
-<td><form method="post" action="/tokens/${escapeHtml(t.id)}/revoke"><button class="button quiet" type="submit">Revoke</button></form></td></tr>`,
+<td><form method="post" action="/tokens/${escapeHtml(t.id)}/revoke"><button class="button quiet danger" type="submit" aria-label="Revoke ${escapeHtml(CLIENT_LABELS[t.client as AgentClient] ?? t.client)} token created ${when(t.createdAt)}">Revoke</button></form></td></tr>`,
     )
     .join("");
   const table = rows
-    ? `<table><thead><tr><th>Agent</th><th>Created</th><th>Last used</th><th>Expires</th><th></th></tr></thead><tbody>${rows}</tbody></table>`
-    : `<p class="muted">No active agent tokens.</p>`;
+    ? `<div class="table-wrap"><table><thead><tr><th>Agent</th><th>Created</th><th>Last used</th><th>Expires</th><th><span class="muted">Action</span></th></tr></thead><tbody>${rows}</tbody></table></div>`
+    : `<p class="muted">No active agent tokens yet.</p>`;
   return page(
     "Connected · Company Brain board",
     `<div class="eyebrow">Connected as ${escapeHtml(opts.login)}</div><h1>Connect an agent</h1>
-<p class="muted">Each agent gets its own token, shown once. A token can read whatever your GitHub authorization for this app covers, so keep
-it out of shared channels and logs. Tokens expire, and you can revoke any of them here.</p>
-<div class="row">${create}</div>
+<p class="lede">Each agent gets its own token, shown once. A token reaches whatever your GitHub authorization for this app covers, so keep it out of shared channels and logs.</p>
+<div class="clients">${create}</div>
+<h2>Open a board</h2>
+<form method="get" action="/board" class="panel"><label for="repo">Repository</label>
+<div class="row"><input type="text" id="repo" name="repo" placeholder="owner/name" autocomplete="off" spellcheck="false" required pattern="[A-Za-z0-9_.\\-]+/[A-Za-z0-9_.\\-]+" title="owner/name, for example octocat/hello-world">
+<button class="button" type="submit">Open board</button></div>
+<p class="muted small" style="margin:8px 0 0">Needs triage access or higher on the repository.</p></form>
 <h2>Active tokens</h2>${table}
-<h2>Open a board</h2><p class="muted">Boards are per repository, for people with triage access or higher on it: <code>/board/&lt;owner&gt;/&lt;repo&gt;</code></p>
-<div class="row"><form method="post" action="/auth/logout"><button class="button quiet" type="submit">Sign out</button></form>
-<form method="post" action="/tokens/revoke-all"><button class="button quiet" type="submit">Revoke all tokens and sign out</button></form></div>`,
+<h2>Recent agent activity</h2>${
+      opts.activity.length
+        ? `<div class="table-wrap"><table><thead><tr><th>When</th><th>Agent</th><th>Tool</th><th>Repository or post</th><th>Result</th></tr></thead><tbody>${opts.activity
+            .map(
+              (e) =>
+                `<tr><td>${when(e.at)}</td><td>${escapeHtml(CLIENT_LABELS[e.client as AgentClient] ?? e.client)}</td><td><code>${escapeHtml(e.tool)}</code></td><td>${e.subject ? escapeHtml(e.subject) : '<span class="muted">none</span>'}</td><td>${e.ok ? "ok" : '<span class="danger">error</span>'}</td></tr>`,
+            )
+            .join("")}</tbody></table></div>`
+        : `<p class="muted">No agent tool calls yet.</p>`
+    }
+<h2>Danger zone</h2>
+<div class="panel row"><p class="muted small" style="margin:0;flex:1;min-width:220px">Revokes every agent token, signs you out, and deletes the stored GitHub authorization and your activity history.</p>
+<form method="post" action="/tokens/revoke-all"><button class="button quiet danger" type="submit">Revoke all tokens and sign out</button></form></div>`,
+    { signedIn: true },
   );
 }
 
 export function renderTokenCreated(opts: { login: string; client: AgentClient; token: string; mcpUrl: string; expiresAt: number }): string {
   return page(
     "New token · Company Brain board",
-    `<div class="eyebrow">Connected as ${escapeHtml(opts.login)}</div><h1>${escapeHtml(CLIENT_LABELS[opts.client])}</h1>
-<p class="muted">Copy this now; it will not be shown again. It expires ${when(opts.expiresAt)}.</p>
+    `<div class="eyebrow">Connected as ${escapeHtml(opts.login)}</div><h1>${escapeHtml(CLIENT_LABELS[opts.client])} is ready to connect</h1>
+<div class="notice" role="status"><strong>Copy this now.</strong> The token is shown once and expires ${when(opts.expiresAt)}.</div>
 <pre>${escapeHtml(connectionSnippet(opts.client, opts.mcpUrl, opts.token))}</pre>
+<p class="muted small" style="margin-top:14px">Then ask the agent to call <code>board_read</code> on a repository to check the connection.</p>
 <p><a class="button quiet" href="/">Done</a></p>`,
+    { signedIn: true, narrow: true },
   );
 }
 
-function card(p: Post): string {
+const EVENT_VERBS: Record<BoardEvent["kind"], string> = {
+  "post.created": "posted",
+  "claim.released": "released",
+  "post.closed": "closed",
+};
+
+function card(p: Post, open: boolean): string {
   const meta = [
     `${escapeHtml(p.authorLogin)} via ${escapeHtml(p.client)}`,
     when(p.createdAt),
     p.target ? `target ${escapeHtml(p.target)}` : "",
     p.to ? `to ${escapeHtml(p.to)}` : "",
-    p.expiresAt ? `claimed until ${when(p.expiresAt)}` : "",
+    p.expiresAt ? `until ${when(p.expiresAt)}` : "",
   ]
     .filter(Boolean)
     .join(" · ");
-  return `<div class="card"><span class="chip">${escapeHtml(p.type)}</span><strong>${escapeHtml(p.title)}</strong>
-<div class="muted" style="margin-top:6px;font-size:13px">${meta}</div><div class="body">${escapeHtml(p.body)}</div></div>`;
+  const body = p.body.trim() ? `<div class="body">${escapeHtml(p.body)}</div>` : "";
+  return `<details class="post"${open ? " open" : ""}><summary><span class="tag ${escapeHtml(p.type)}">${escapeHtml(p.type)}</span><span class="title">${escapeHtml(p.title)}</span>
+<span class="meta">${meta}</span></summary>${body}</details>`;
 }
 
-export function renderBoard(opts: { repo: string; login: string; board: Board }): string {
-  const section = (title: string, posts: Post[]) => (posts.length ? `<h2>${title} (${posts.length})</h2>${posts.map(card).join("")}` : "");
-  const content = [section("Active claims", opts.board.claims), section("Recent findings and handoffs", opts.board.recent), section("Open tasks", opts.board.tasks)].join("");
+export function renderBoard(opts: { repo: string; login: string; board: Board; events: BoardEvent[] }): string {
+  const { tasks, claims, recent } = opts.board;
+  const column = (title: string, posts: Post[], empty: string, open: boolean) =>
+    `<section class="column" aria-label="${title}"><h2>${title} <span>${posts.length}</span></h2>${posts.length ? posts.map((p) => card(p, open)).join("") : `<p class="empty">${empty}</p>`}</section>`;
+  const stat = (n: number, label: string) => `<span class="stat"><b>${n}</b> ${label}</span>`;
   return page(
     `${opts.repo} · Company Brain board`,
-    `<div class="eyebrow">Board</div><h1>${escapeHtml(opts.repo)}</h1><p class="muted">Viewing as ${escapeHtml(opts.login)}</p>
-${content || `<p class="muted">The board is empty.</p>`}`,
+    `<div class="eyebrow">Board · viewing as ${escapeHtml(opts.login)}</div><h1>${escapeHtml(opts.repo)}</h1>
+<div class="stats">${stat(tasks.length, "open tasks")}${stat(claims.length, "active claims")}${stat(recent.length, "recent findings and handoffs")}</div>
+<div class="columns">
+${column("Active claims", claims, "Nobody is working on anything right now.", true)}
+${column("Findings and handoffs", recent, "No findings or handoffs yet.", false)}
+${column("Open tasks", tasks, "No open tasks.", false)}
+</div>
+<h2>Activity</h2>
+${
+      opts.events.length
+        ? `<ol class="timeline">${[...opts.events]
+            .reverse()
+            .map(
+              (e) =>
+                `<li><time datetime="${new Date(e.at).toISOString()}">${when(e.at)}</time><span class="lane ${escapeHtml(e.client)}">${escapeHtml(CLIENT_LABELS[e.client as AgentClient] ?? e.client)}</span><span><b>${escapeHtml(e.actorLogin)}</b> ${EVENT_VERBS[e.kind]} ${escapeHtml(e.postType)} <span class="title">${escapeHtml(e.title)}</span></span></li>`,
+            )
+            .join("")}</ol>`
+        : `<p class="muted">No activity yet.</p>`
+    }`,
+    { signedIn: true },
   );
 }
 
 export function renderDenied(): string {
-  return page("No access · Company Brain board", `<h1>No board access</h1><p class="muted">Not found, or you need triage access or higher on this repository.</p>`);
+  return page(
+    "No access · Company Brain board",
+    `<div class="center"><div class="panel"><h1>No board access</h1><p class="muted">Not found, or you need triage access or higher on this repository.</p><a class="button quiet" href="/">Home</a></div></div>`,
+    { signedIn: true },
+  );
 }
 
 export function renderMessage(title: string, message: string): string {
-  return page(`${title} · Company Brain board`, `<h1>${escapeHtml(title)}</h1><p class="muted">${escapeHtml(message)}</p><p><a class="button quiet" href="/">Home</a></p>`);
+  return page(
+    `${title} · Company Brain board`,
+    `<div class="center"><div class="panel"><h1>${escapeHtml(title)}</h1><p class="muted">${escapeHtml(message)}</p><a class="button quiet" href="/">Home</a></div></div>`,
+  );
 }

@@ -2,7 +2,8 @@ export interface Config {
   port: number;
   publicUrl: string;
   secret: string;
-  dbPath: string;
+  databaseUrl: string | undefined;
+  cronSecret: string | undefined;
   githubClientId: string | undefined;
   githubClientSecret: string | undefined;
   githubApiUrl: string;
@@ -41,7 +42,8 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     port,
     publicUrl,
     secret,
-    dbPath: env.BOARD_DB_PATH ?? "board.db",
+    databaseUrl: env.DATABASE_URL || undefined,
+    cronSecret: env.CRON_SECRET || undefined,
     githubClientId,
     githubClientSecret,
     githubApiUrl: (env.GITHUB_API_URL ?? "https://api.github.com").replace(/\/+$/, ""),

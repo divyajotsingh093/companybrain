@@ -1,11 +1,13 @@
+import { PGlite, type Transaction, types } from "@electric-sql/pglite";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import { createAccessChecker, resolveRepoAccess } from "../src/access.ts";
-import { createApp } from "../src/app.ts";
 import { createAuth } from "../src/auth.ts";
 import type { Config } from "../src/config.ts";
+import type { Database, Query } from "../src/db.ts";
 import { createGitHub, type Fetch } from "../src/github.ts";
 import { createRateLimiter } from "../src/limits.ts";
+import { createApp } from "../src/routes.ts";
 import { openStore } from "../src/store.ts";
 import type { AgentClient } from "../src/token.ts";
 
@@ -127,7 +129,8 @@ export function testConfig(overrides: Partial<Config> = {}): Config {
     port: 0,
     publicUrl: ORIGIN,
     secret: SECRET,
-    dbPath: ":memory:",
+    databaseUrl: undefined,
+    cronSecret: "cron-secret-for-tests",
     githubClientId: "client-id",
     githubClientSecret: "client-secret",
     githubApiUrl: API,
@@ -140,11 +143,22 @@ export function testConfig(overrides: Partial<Config> = {}): Config {
   };
 }
 
-export function buildApp(overrides: Partial<Config> = {}): Harness {
+export async function memoryDatabase(): Promise<Database> {
+  const pg = await PGlite.create({ parsers: { [types.INT8]: (value: string) => Number(value) } });
+  const wrap = (q: PGlite | Transaction): Query => ({
+    async query<T>(text: string, params: Array<string | number | null> = []) {
+      const result = await q.query<T>(text, params);
+      return { rows: result.rows, count: result.affectedRows ?? 0 };
+    },
+  });
+  return { ...wrap(pg), transaction: (run) => pg.transaction((tx) => run(wrap(tx))), close: () => pg.close() };
+}
+
+export async function buildApp(overrides: Partial<Config> = {}): Promise<Harness> {
   const clock = { now: 1_800_000_000_000 };
   const now = () => clock.now;
   const config = testConfig(overrides);
-  const store = openStore(config.dbPath, now);
+  const store = openStore(await memoryDatabase(), now);
   const auth = createAuth({ config, store, fetch: fakeGitHub, now });
   const githubFor = (token: string) => createGitHub(token, { apiUrl: config.githubApiUrl, fetch: fakeGitHub });
   const access = createAccessChecker({
@@ -152,23 +166,27 @@ export function buildApp(overrides: Partial<Config> = {}): Harness {
     now,
     resolve: async (uid, login, repo) => resolveRepoAccess(githubFor(await auth.githubToken(uid)), uid, login, repo),
   });
-  const limiter = createRateLimiter({ limit: config.requestsPerMinute, windowMs: 60_000, now });
+  const limiter = createRateLimiter({ store, limit: config.requestsPerMinute, windowMs: 60_000 });
   const app = createApp({ config, store, auth, access, githubFor, limiter, fetch: fakeGitHub, now });
   return { app, store, auth, config, clock };
 }
 
-export function agentToken(h: Harness, githubToken: string, client: AgentClient): string {
+export async function agentToken(h: Harness, githubToken: string, client: AgentClient): Promise<string> {
   const user = USERS[githubToken];
   if (!user) throw new Error(`unknown test user ${githubToken}`);
-  h.auth.saveGrant(user.id, user.login, { accessToken: githubToken, expiresAt: null, refreshToken: null, refreshExpiresAt: null });
-  return h.auth.issue(user.id, "agent", client, h.config.agentTokenTtlMs).token;
+  await h.auth.saveGrant(user.id, user.login, { accessToken: githubToken, expiresAt: null, refreshToken: null, refreshExpiresAt: null });
+  const issued = await h.auth.issue(user.id, "agent", client, h.config.agentTokenTtlMs);
+  if (!issued) throw new Error("agent token cap reached");
+  return issued.token;
 }
 
-export function sessionCookie(h: Harness, githubToken: string): string {
+export async function sessionCookie(h: Harness, githubToken: string): Promise<string> {
   const user = USERS[githubToken];
   if (!user) throw new Error(`unknown test user ${githubToken}`);
-  h.auth.saveGrant(user.id, user.login, { accessToken: githubToken, expiresAt: null, refreshToken: null, refreshExpiresAt: null });
-  return `cb_session=${h.auth.issue(user.id, "session", "web", h.config.sessionTtlMs).token}`;
+  await h.auth.saveGrant(user.id, user.login, { accessToken: githubToken, expiresAt: null, refreshToken: null, refreshExpiresAt: null });
+  const issued = await h.auth.issue(user.id, "session", "web", h.config.sessionTtlMs);
+  if (!issued) throw new Error("session token refused");
+  return `cb_session=${issued.token}`;
 }
 
 export async function connectAgent(t: { after: (fn: () => Promise<void>) => void }, h: Harness, token: string): Promise<Client> {

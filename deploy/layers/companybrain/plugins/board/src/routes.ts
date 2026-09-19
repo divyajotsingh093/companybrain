@@ -7,11 +7,12 @@ import type { AccessChecker } from "./access.ts";
 import { canUseBoard } from "./access.ts";
 import type { Auth, Principal } from "./auth.ts";
 import type { Config } from "./config.ts";
-import { exchangeCode, type Fetch, type GitHubClient, GitHubError } from "./github.ts";
+import { assertRepo, exchangeCode, type Fetch, type GitHubClient, GitHubError } from "./github.ts";
 import type { RateLimiter } from "./limits.ts";
-import { createBoardServer } from "./mcp.ts";
+import { createBoardServer, TOOL_NAMES } from "./mcp.ts";
+import { cleanLine } from "./untrusted.ts";
 import { ACTIVE_AGENT_TOKENS_PER_USER, type Store } from "./store.ts";
-import { isAgentClient, seal, unseal } from "./token.ts";
+import { hashToken, isAgentClient, seal, unseal } from "./token.ts";
 import { type ErrorCode, isErrorCode, renderBoard, renderConnected, renderDenied, renderHome, renderMessage, renderTokenCreated } from "./web.ts";
 
 export interface AppDeps {
@@ -44,7 +45,7 @@ export function createApp(deps: AppDeps): Hono {
   app.use("*", async (c, next) => {
     await next();
     c.header("x-content-type-options", "nosniff");
-    c.header("referrer-policy", "no-referrer");
+    c.header("referrer-policy", "same-origin");
     if (secure) c.header("strict-transport-security", "max-age=31536000; includeSubDomains");
     if (c.res.headers.get("content-type")?.startsWith("text/html")) {
       c.header("cache-control", "no-store");
@@ -53,7 +54,7 @@ export function createApp(deps: AppDeps): Hono {
     }
   });
 
-  const session = (c: Context): Principal | null => auth.verify(getCookie(c, SESSION_COOKIE), "session");
+  const session = (c: Context): Promise<Principal | null> => auth.verify(getCookie(c, SESSION_COOKIE), "session");
 
   const sameOrigin = (c: Context): boolean => {
     const header = c.req.header("origin");
@@ -63,46 +64,53 @@ export function createApp(deps: AppDeps): Hono {
 
   app.get("/health", (c) => c.json({ ok: true }));
 
-  app.get("/", (c) => {
-    const principal = session(c);
+  app.get("/cron/purge", async (c) => {
+    if (!config.cronSecret || hashToken(c.req.header("authorization") ?? "") !== hashToken(`Bearer ${config.cronSecret}`)) return c.text("Not found.", 404);
+    return c.json(await store.purge());
+  });
+
+  app.get("/", async (c) => {
+    const principal = await session(c);
     if (!principal) {
       const code = c.req.query("error");
       return c.html(renderHome({ githubConfigured, ...(isErrorCode(code) ? { error: code } : {}) }));
     }
-    return c.html(renderConnected({ login: principal.login, tokens: store.activeTokens(principal.uid, "agent") }));
+    return c.html(
+      renderConnected({ login: principal.login, tokens: await store.activeTokens(principal.uid, "agent"), activity: await store.auditTrail(principal.uid, 20) }),
+    );
   });
 
   const formLimit = bodyLimit({ maxSize: FORM_BODY_LIMIT, onError: (c) => c.text("Request body too large.", 413) });
 
   app.post("/tokens", formLimit, async (c) => {
-    const principal = session(c);
+    const principal = await session(c);
     if (!principal) return c.redirect("/");
     if (!sameOrigin(c)) return c.html(renderMessage("Request blocked", "That request did not come from this site."), 403);
     const form = await c.req.parseBody();
     const client = typeof form.client === "string" ? form.client : "";
     if (!isAgentClient(client)) return c.html(renderMessage("Unknown agent", "Choose Claude Code, Codex, Cursor or Grok."), 400);
-    if (store.countActiveAgentTokens(principal.uid) >= ACTIVE_AGENT_TOKENS_PER_USER) {
+    const issued = await auth.issue(principal.uid, "agent", client, config.agentTokenTtlMs);
+    if (!issued) {
       return c.html(renderMessage("Token limit reached", `You have ${ACTIVE_AGENT_TOKENS_PER_USER} active agent tokens. Revoke one before creating another.`), 429);
     }
-    const issued = auth.issue(principal.uid, "agent", client, config.agentTokenTtlMs);
     return c.html(renderTokenCreated({ login: principal.login, client, token: issued.token, mcpUrl, expiresAt: issued.row.expiresAt }));
   });
 
-  app.post("/tokens/revoke-all", formLimit, (c) => {
-    const principal = session(c);
+  app.post("/tokens/revoke-all", formLimit, async (c) => {
+    const principal = await session(c);
     if (!principal) return c.redirect("/");
     if (!sameOrigin(c)) return c.html(renderMessage("Request blocked", "That request did not come from this site."), 403);
-    store.revokeAllTokens(principal.uid);
-    store.deleteCredential(principal.uid);
+    await store.revokeAllTokens(principal.uid);
+    await store.deleteCredential(principal.uid);
     deleteCookie(c, SESSION_COOKIE, { path: "/" });
     return c.redirect("/");
   });
 
-  app.post("/tokens/:id/revoke", formLimit, (c) => {
-    const principal = session(c);
+  app.post("/tokens/:id/revoke", formLimit, async (c) => {
+    const principal = await session(c);
     if (!principal) return c.redirect("/");
     if (!sameOrigin(c)) return c.html(renderMessage("Request blocked", "That request did not come from this site."), 403);
-    store.revokeToken(c.req.param("id"), principal.uid);
+    await store.revokeToken(c.req.param("id"), principal.uid);
     return c.redirect("/");
   });
 
@@ -143,8 +151,9 @@ export function createApp(deps: AppDeps): Hono {
         ...(deps.fetch ? { fetch: deps.fetch } : {}),
       });
       const viewer = await githubFor(grant.accessToken).viewer();
-      auth.saveGrant(viewer.id, viewer.login, grant);
-      const issued = auth.issue(viewer.id, "session", "web", config.sessionTtlMs);
+      await auth.saveGrant(viewer.id, viewer.login, grant);
+      const issued = await auth.issue(viewer.id, "session", "web", config.sessionTtlMs);
+      if (!issued) return fail("exchange");
       setCookie(c, SESSION_COOKIE, issued.token, {
         httpOnly: true,
         secure,
@@ -158,22 +167,32 @@ export function createApp(deps: AppDeps): Hono {
     }
   });
 
-  app.post("/auth/logout", formLimit, (c) => {
+  app.post("/auth/logout", formLimit, async (c) => {
     if (!sameOrigin(c)) return c.html(renderMessage("Request blocked", "That request did not come from this site."), 403);
-    const principal = session(c);
-    if (principal) store.revokeToken(principal.tokenId, principal.uid);
+    const principal = await session(c);
+    if (principal) await store.revokeToken(principal.tokenId, principal.uid);
     deleteCookie(c, SESSION_COOKIE, { path: "/" });
     return c.redirect("/");
   });
 
+  app.get("/board", (c) => {
+    const repo = (c.req.query("repo") ?? "").trim();
+    try {
+      const [owner, name] = assertRepo(repo).split("/");
+      return c.redirect(`/board/${encodeURIComponent(owner as string)}/${encodeURIComponent(name as string)}`);
+    } catch {
+      return c.html(renderMessage("Check the repository", "Enter a repository as owner/name."), 400);
+    }
+  });
+
   app.get("/board/:owner/:repo", async (c) => {
-    const principal = session(c);
+    const principal = await session(c);
     if (!principal) return c.redirect("/");
     const repo = `${c.req.param("owner")}/${c.req.param("repo")}`;
     try {
       const a = await access.check(principal.uid, principal.login, repo);
       if (!canUseBoard(a.role)) return c.html(renderDenied(), 404);
-      return c.html(renderBoard({ repo: a.fullName, login: principal.login, board: store.readBoard(a.repoId, { limit: 100 }) }));
+      return c.html(renderBoard({ repo: a.fullName, login: principal.login, board: await store.readBoard(a.repoId, { limit: 100 }), events: await store.events(a.repoId, { limit: 40 }) }));
     } catch (err) {
       if (!(err instanceof GitHubError) || err.kind === "unauthorized" || err.kind === "rate_limited" || err.kind === "unavailable") {
         return c.html(renderMessage("GitHub problem", "GitHub could not confirm your access right now. Reconnect or try again shortly."), 503);
@@ -191,13 +210,13 @@ export function createApp(deps: AppDeps): Hono {
     "/mcp",
     bodyLimit({ maxSize: MCP_BODY_LIMIT, onError: (c) => rpcError(c, 413, -32000, "Request body too large.") }),
     async (c) => {
-      const principal = auth.verify(c.req.header("authorization"), "agent");
+      const principal = await auth.verify(c.req.header("authorization"), "agent");
       if (!principal) {
         return rpcError(c, 401, -32001, `Unauthorized. Connect GitHub and create an agent token at ${config.publicUrl}.`, {
           "www-authenticate": 'Bearer realm="companybrain-board"',
         });
       }
-      if (!limiter.allow(`uid:${principal.uid}`)) return rpcError(c, 429, -32000, "Too many requests. Slow down.", { "retry-after": "60" });
+      if (!(await limiter.allow(`uid:${principal.uid}`))) return rpcError(c, 429, -32000, "Too many requests. Slow down.", { "retry-after": "60" });
       let parsed: unknown;
       try {
         parsed = await c.req.json();
@@ -216,10 +235,28 @@ export function createApp(deps: AppDeps): Hono {
       const transport = new WebStandardStreamableHTTPServerTransport({ sessionIdGenerator: undefined, enableJsonResponse: true });
       await server.connect(transport);
       try {
-        return await transport.handleRequest(c.req.raw, {
+        const res = await transport.handleRequest(c.req.raw, {
           parsedBody: parsed,
           authInfo: { token: "redacted", clientId: principal.client, scopes: [], extra: { login: principal.login } },
         });
+        const call = parsed as { method?: unknown; params?: { name?: unknown; arguments?: unknown } } | null;
+        if (call?.method === "tools/call") {
+          const reply = (await res.clone().json().catch(() => null)) as { error?: unknown; result?: { isError?: boolean } } | null;
+          const args = (call.params?.arguments ?? {}) as { repo?: unknown; post_id?: unknown };
+          const tool = String(call.params?.name ?? "");
+          const subject = typeof args.repo === "string" ? args.repo : typeof args.post_id === "string" ? args.post_id : null;
+          if (TOOL_NAMES.has(tool)) await store
+            .audit({
+              uid: principal.uid,
+              tokenId: principal.tokenId,
+              client: principal.client,
+              tool,
+              subject: subject === null ? null : cleanLine(subject, 201),
+              ok: Boolean(reply && !reply.error && !reply.result?.isError),
+            })
+            .catch((err: unknown) => console.error(`board audit write failed: ${err instanceof Error ? err.name : typeof err}`));
+        }
+        return res;
       } finally {
         await server.close();
       }

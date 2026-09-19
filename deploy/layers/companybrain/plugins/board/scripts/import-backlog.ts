@@ -1,6 +1,7 @@
 import { readFileSync } from "node:fs";
 import { basename, resolve } from "node:path";
 import { assertRepo, createGitHub } from "../src/github.ts";
+import { createPool, postgres } from "../src/db.ts";
 import { openStore } from "../src/store.ts";
 
 export interface BacklogTask {
@@ -40,34 +41,28 @@ export function parseBacklog(source: string, markdown: string): BacklogTask[] {
   return tasks.map((t) => ({ ...t, body: t.body.trim() }));
 }
 
-const [major = 0, minor = 0] = process.versions.node.split(".").map(Number);
-if (major < 24 || (major === 24 && minor < 2)) {
-  console.error("import-backlog needs Node 24.2 or later");
-  process.exit(2);
-}
-
 if (import.meta.main) {
   const [repoArg, ...files] = process.argv.slice(2);
-  if (!repoArg || !files.length || !process.env.BOARD_DB_PATH) {
-    console.error("usage: BOARD_DB_PATH=<server database> node scripts/import-backlog.ts <owner/repo> <backlog.md>...");
-    console.error("Run it on the server host against the same database the service uses. Set GITHUB_TOKEN for private repositories.");
+  if (!repoArg || !files.length || !process.env.DATABASE_URL) {
+    console.error("usage: DATABASE_URL=<board database> node scripts/import-backlog.ts <owner/repo> <backlog.md>...");
+    console.error("Point it at the same database the service uses. Set GITHUB_TOKEN for private repositories.");
     process.exit(2);
   }
   const repo = await createGitHub(process.env.GITHUB_TOKEN ?? null, {
     apiUrl: (process.env.GITHUB_API_URL ?? "https://api.github.com").replace(/\/+$/, ""),
   }).repo(assertRepo(repoArg));
-  const store = openStore(process.env.BOARD_DB_PATH);
+  const store = openStore(postgres(createPool(process.env.DATABASE_URL)));
   let added = 0;
   let skipped = 0;
   for (const file of files) {
     const source = basename(file, ".md");
     for (const task of parseBacklog(source, readFileSync(resolve(file), "utf8"))) {
       const title = `${source} #${task.number}: ${task.title}`;
-      if (store.hasTask(repo.id, title)) {
+      if (await store.hasTask(repo.id, title)) {
         skipped++;
         continue;
       }
-      store.addPost({
+      await store.addPost({
         repoId: repo.id,
         repoName: repo.fullName,
         type: "task",
@@ -81,6 +76,6 @@ if (import.meta.main) {
       added++;
     }
   }
-  store.close();
+  await store.close();
   console.log(`imported ${added} tasks into ${repo.fullName} (id ${repo.id}); ${skipped} already present`);
 }
