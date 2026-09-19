@@ -379,3 +379,37 @@ test("board events record every change in order, page with a cursor, and appear 
   assert.doesNotMatch(html, /<b>login<\/b>/);
   assert.match(html, /Fix &lt;b&gt;login&lt;\/b&gt;/);
 });
+
+test("the web UI groups backlog tasks, shows claim countdowns and links boards the user's agents used", async (t) => {
+  const h = await buildApp();
+  for (const title of ["agent-board #1: Remote MCP server", "agent-board #2: Identity", "harness #7: Park and resume", "Loose task"]) {
+    await h.store.addPost({ repoId: 100, repoName: "acme/app", type: "task", title, body: "", authorLogin: "backlog-import", authorUid: 0, client: "import", system: true });
+  }
+  const alice = await connectAgent(t, h, await agentToken(h, "gh-alice", "claude_code"));
+  await call(alice, "board_post", { repo: "acme/app", type: "claim", title: "Doing it", body: "", target: "x", ttl_minutes: 60 });
+  await call(alice, "board_read", { repo: "other/secret" });
+  h.clock.now += 15 * 60_000;
+  const cookie = await sessionCookie(h, "gh-alice");
+
+  const board = await (await h.app.fetch(new Request(`${ORIGIN}/board/acme/app`, { headers: { cookie } }))).text();
+  assert.match(board, /<a class="skip" href="#main">/);
+  assert.match(board, /<details class="group" open><summary><span>agent-board<\/span><span class="count">2<\/span>/);
+  assert.match(board, /<summary><span>harness<\/span><span class="count">1<\/span>/);
+  assert.match(board, /<summary><span>Other<\/span><span class="count">1<\/span>/);
+  assert.match(board, /<span class="tag task">#1<\/span><span class="title">Remote MCP server<\/span>/);
+  assert.match(board, /aria-label="Claim expires in 45 min"><span style="width:75%">/);
+  assert.match(board, /15 min ago/);
+
+  const home = await (await h.app.fetch(new Request(`${ORIGIN}/`, { headers: { cookie } }))).text();
+  assert.match(home, /<a class="panel board-link" href="\/board\/acme\/app">/);
+  assert.doesNotMatch(home, /board-link" href="\/board\/other\/secret"/);
+});
+
+test("relative times read naturally in both directions", async () => {
+  const { relative } = await import("../src/web.ts");
+  const now = 1_000_000_000;
+  assert.equal(relative(now + 20_000, now), "just now");
+  assert.equal(relative(now - 5 * 60_000, now), "5 min ago");
+  assert.equal(relative(now + 3 * 3_600_000, now), "in 3 h");
+  assert.equal(relative(now - 3 * 86_400_000, now), "3 d ago");
+});

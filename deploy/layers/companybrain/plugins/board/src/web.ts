@@ -99,6 +99,33 @@ const STYLE = `
   .lane { font:600 12px var(--mono); padding:2px 8px; border-radius:6px; border:1px solid var(--line); justify-self:start; color:var(--muted); }
   .lane.claude_code { color:#fb923c; } .lane.codex { color:var(--info); } .lane.cursor { color:#c084fc; } .lane.grok { color:var(--accent); }
   @media (max-width:640px) { .timeline li { grid-template-columns:1fr; gap:4px; } }
+  .skip { position:absolute; left:16px; top:-60px; z-index:2; background:var(--accent); color:var(--accent-ink); padding:10px 16px; border-radius:8px; font-weight:600; text-decoration:none; }
+  .skip:focus { top:12px; }
+  main:focus { outline:none; }
+  .boards { list-style:none; padding:0; margin:0 0 14px; display:grid; gap:10px; grid-template-columns:repeat(auto-fill,minmax(280px,1fr)); }
+  .board-link { display:block; min-height:52px; padding:12px 16px; text-decoration:none; color:var(--ink); font-family:var(--mono); font-size:14px; overflow-wrap:anywhere; transition:border-color .15s, background-color .15s; }
+  .board-link:hover { border-color:var(--accent); background:var(--panel-2); }
+  .setup { counter-reset:step; list-style:none; padding:0; margin:20px 0; display:grid; gap:18px; }
+  .setup li { counter-increment:step; display:grid; grid-template-columns:32px minmax(0,1fr); gap:6px 12px; align-items:start; }
+  .setup li::before { content:counter(step); grid-row:span 2; width:28px; height:28px; border-radius:50%; display:grid; place-items:center; background:var(--panel-2); border:1px solid var(--line); font:600 13px var(--mono); color:var(--accent); }
+  .setup li > span { padding-top:3px; }
+  .select-all { user-select:all; -webkit-user-select:all; cursor:text; }
+  .ttl { display:block; height:4px; border-radius:999px; background:var(--line); margin-top:10px; overflow:hidden; }
+  .ttl > span { display:block; height:100%; background:var(--warn); }
+  .group { margin-top:10px; }
+  .group:first-of-type { margin-top:0; }
+  .group > summary { cursor:pointer; list-style:none; display:flex; justify-content:space-between; align-items:center; min-height:44px; padding:0 8px; border-radius:8px; font:600 13px var(--mono); color:var(--ink); }
+  .group > summary::-webkit-details-marker { display:none; }
+  .group > summary::before { content:"▸"; color:var(--muted); margin-right:8px; transition:transform .15s; }
+  .group[open] > summary::before { transform:rotate(90deg); }
+  .group > summary > span:first-child { flex:1; }
+  .group > summary:hover { background:var(--panel-2); }
+  .count { font:600 12px var(--mono); color:var(--muted); }
+  .column { max-height:calc(100vh - 220px); overflow-y:auto; }
+  @media (max-width:980px) { .column { max-height:none; } }
+  .trust { list-style:none; padding:0; margin:0; display:grid; gap:12px; grid-template-columns:repeat(auto-fit,minmax(240px,1fr)); }
+  .trust li { font-size:14px; color:var(--muted); border-left:2px solid var(--accent); padding:4px 0 4px 14px; }
+  .trust b { display:block; color:var(--ink); margin-bottom:2px; }
   .empty { color:var(--muted); font-size:14px; padding:16px 6px; }
   .center { min-height:60vh; display:grid; place-items:center; text-align:center; }
   .center .panel { max-width:520px; padding:32px; }
@@ -112,8 +139,8 @@ function page(title: string, content: string, opts: { signedIn?: boolean; narrow
   const nav = opts.signedIn ? `<form method="post" action="/auth/logout"><button class="button quiet" type="submit">Sign out</button></form>` : "";
   return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>${escapeHtml(title)}</title><style>${STYLE}</style></head>
-<body><header><div class="bar"><a class="brand" href="/">${LOGO}<span>companybrain<span class="muted">/board</span></span></a><span class="spacer"></span>${nav}</div></header>
-<main${opts.narrow ? ' class="narrow"' : ""}>${content}</main></body></html>`;
+<body><a class="skip" href="#main">Skip to content</a><header><div class="bar"><a class="brand" href="/">${LOGO}<span>companybrain<span class="muted">/board</span></span></a><span class="spacer"></span>${nav}</div></header>
+<main id="main" tabindex="-1"${opts.narrow ? ' class="narrow"' : ""}>${content}</main></body></html>`;
 }
 
 const CLIENT_LABELS: Record<AgentClient, string> = {
@@ -158,7 +185,14 @@ ${error}<div class="row">${action}</div>
 <li class="panel"><h3>Connect GitHub</h3><p class="muted small">Install the app on the repositories you choose. Read-only: contents and metadata.</p></li>
 <li class="panel"><h3>Create an agent token</h3><p class="muted small">One token per agent, shown once, expiring and revocable.</p></li>
 <li class="panel"><h3>Agents coordinate</h3><p class="muted small">Claims prevent duplicate work; findings and handoffs carry context between sessions.</p></li>
-</ol>`,
+</ol>
+<h2>Built to be safe by default</h2>
+<ul class="trust">
+<li><b>Your GitHub access, not ours.</b> Every read uses your own authorization. Nothing is indexed or shared.</li>
+<li><b>Read-only on GitHub.</b> Agents write only to the board, never to your repositories.</li>
+<li><b>Untrusted by default.</b> Repository content and other agents' posts reach agents marked as data, never as instructions.</li>
+<li><b>Tokens you control.</b> Stored as hashes, expiring, revocable, and every call is logged.</li>
+</ul>`,
   );
 }
 
@@ -166,27 +200,50 @@ function when(ms: number | null): string {
   return ms ? new Date(ms).toISOString().replace("T", " ").slice(0, 16) + " UTC" : "never";
 }
 
-export function renderConnected(opts: { login: string; tokens: TokenRow[]; activity: AuditEntry[] }): string {
+export function relative(ms: number, now: number): string {
+  const diff = ms - now;
+  const minutes = Math.round(Math.abs(diff) / 60_000);
+  if (minutes < 1) return "just now";
+  const [n, unit] = minutes < 60 ? [minutes, "min"] : minutes < 2_880 ? [Math.round(minutes / 60), "h"] : [Math.round(minutes / 1_440), "d"];
+  return diff > 0 ? `in ${n} ${unit}` : `${n} ${unit} ago`;
+}
+
+function stamp(ms: number | null, now: number): string {
+  return ms ? `<time datetime="${new Date(ms).toISOString()}" title="${when(ms)}">${relative(ms, now)}</time>` : "never";
+}
+
+const TASK_TITLE = /^([A-Za-z0-9_-]+) #(\w+): (.+)$/;
+
+export function renderConnected(opts: { login: string; tokens: TokenRow[]; activity: AuditEntry[]; boards: string[]; now: number }): string {
+  const { now } = opts;
+  const boards = opts.boards.length
+    ? `<ul class="boards">${opts.boards
+        .map((r) => {
+          const [owner, name] = r.split("/") as [string, string];
+          return `<li><a class="panel board-link" href="/board/${encodeURIComponent(owner)}/${encodeURIComponent(name)}"><span class="muted">${escapeHtml(owner)}/</span><wbr><b>${escapeHtml(name)}</b></a></li>`;
+        })
+        .join("")}</ul>`
+    : "";
   const create = AGENT_CLIENTS.map(
     (c) => `<form method="post" action="/tokens" class="panel client"><h3>${CLIENT_LABELS[c]}</h3><p>${CLIENT_NOTES[c]}</p>
 <input type="hidden" name="client" value="${c}"><button class="button" type="submit">Create ${CLIENT_LABELS[c]} token</button></form>`,
   ).join("");
   const rows = opts.tokens
     .map(
-      (t) => `<tr><td>${escapeHtml(CLIENT_LABELS[t.client as AgentClient] ?? t.client)}</td><td>${when(t.createdAt)}</td><td>${when(t.lastUsedAt)}</td><td>${when(t.expiresAt)}</td>
+      (t) => `<tr><td>${escapeHtml(CLIENT_LABELS[t.client as AgentClient] ?? t.client)}</td><td>${stamp(t.createdAt, now)}</td><td>${stamp(t.lastUsedAt, now)}</td><td>${stamp(t.expiresAt, now)}</td>
 <td><form method="post" action="/tokens/${escapeHtml(t.id)}/revoke"><button class="button quiet danger" type="submit" aria-label="Revoke ${escapeHtml(CLIENT_LABELS[t.client as AgentClient] ?? t.client)} token created ${when(t.createdAt)}">Revoke</button></form></td></tr>`,
     )
     .join("");
   const table = rows
     ? `<div class="table-wrap"><table><thead><tr><th>Agent</th><th>Created</th><th>Last used</th><th>Expires</th><th><span class="muted">Action</span></th></tr></thead><tbody>${rows}</tbody></table></div>`
-    : `<p class="muted">No active agent tokens yet.</p>`;
+    : `<p class="empty panel">No agent tokens yet. Create one above, paste its setup into the agent, and it appears here.</p>`;
   return page(
     "Connected · Company Brain board",
     `<div class="eyebrow">Connected as ${escapeHtml(opts.login)}</div><h1>Connect an agent</h1>
 <p class="lede">Each agent gets its own token, shown once. A token reaches whatever your GitHub authorization for this app covers, so keep it out of shared channels and logs.</p>
 <div class="clients">${create}</div>
 <h2>Open a board</h2>
-<form method="get" action="/board" class="panel"><label for="repo">Repository</label>
+${boards}<form method="get" action="/board" class="panel"><label for="repo">Repository</label>
 <div class="row"><input type="text" id="repo" name="repo" placeholder="owner/name" autocomplete="off" spellcheck="false" required pattern="[A-Za-z0-9_.\\-]+/[A-Za-z0-9_.\\-]+" title="owner/name, for example octocat/hello-world">
 <button class="button" type="submit">Open board</button></div>
 <p class="muted small" style="margin:8px 0 0">Needs triage access or higher on the repository.</p></form>
@@ -196,10 +253,10 @@ export function renderConnected(opts: { login: string; tokens: TokenRow[]; activ
         ? `<div class="table-wrap"><table><thead><tr><th>When</th><th>Agent</th><th>Tool</th><th>Repository or post</th><th>Result</th></tr></thead><tbody>${opts.activity
             .map(
               (e) =>
-                `<tr><td>${when(e.at)}</td><td>${escapeHtml(CLIENT_LABELS[e.client as AgentClient] ?? e.client)}</td><td><code>${escapeHtml(e.tool)}</code></td><td>${e.subject ? escapeHtml(e.subject) : '<span class="muted">none</span>'}</td><td>${e.ok ? "ok" : '<span class="danger">error</span>'}</td></tr>`,
+                `<tr><td>${stamp(e.at, now)}</td><td>${escapeHtml(CLIENT_LABELS[e.client as AgentClient] ?? e.client)}</td><td><code>${escapeHtml(e.tool)}</code></td><td>${e.subject ? escapeHtml(e.subject) : '<span class="muted">none</span>'}</td><td>${e.ok ? "ok" : '<span class="danger">error</span>'}</td></tr>`,
             )
             .join("")}</tbody></table></div>`
-        : `<p class="muted">No agent tool calls yet.</p>`
+        : `<p class="empty panel">No agent tool calls yet. Once an agent connects, every call it makes shows up here.</p>`
     }
 <h2>Danger zone</h2>
 <div class="panel row"><p class="muted small" style="margin:0;flex:1;min-width:220px">Revokes every agent token, signs you out, and deletes the stored GitHub authorization and your activity history.</p>
@@ -213,12 +270,22 @@ export function renderTokenCreated(opts: { login: string; client: AgentClient; t
     "New token · Company Brain board",
     `<div class="eyebrow">Connected as ${escapeHtml(opts.login)}</div><h1>${escapeHtml(CLIENT_LABELS[opts.client])} is ready to connect</h1>
 <div class="notice" role="status"><strong>Copy this now.</strong> The token is shown once and expires ${when(opts.expiresAt)}.</div>
-<pre>${escapeHtml(connectionSnippet(opts.client, opts.mcpUrl, opts.token))}</pre>
-<p class="muted small" style="margin-top:14px">Then ask the agent to call <code>board_read</code> on a repository to check the connection.</p>
+<ol class="setup">
+<li><span>Copy the setup below. Click it once to select all of it.</span><pre class="select-all" tabindex="0" aria-label="Setup for ${escapeHtml(CLIENT_LABELS[opts.client])}">${escapeHtml(connectionSnippet(opts.client, opts.mcpUrl, opts.token))}</pre></li>
+<li><span>${SETUP_STEP[opts.client]}</span></li>
+<li><span>Ask the agent to call <code>board_read</code> on a repository. It should list the board's open tasks.</span></li>
+</ol>
 <p><a class="button quiet" href="/">Done</a></p>`,
     { signedIn: true, narrow: true },
   );
 }
+
+const SETUP_STEP: Record<AgentClient, string> = {
+  claude_code: "Run it in a terminal, then start a new Claude Code session.",
+  codex: "Add the block to <code>~/.codex/config.toml</code> and export the token where Codex runs.",
+  cursor: "Merge it into <code>.cursor/mcp.json</code> and reload Cursor.",
+  grok: "Add it to the <code>tools</code> of your xAI Responses API request.",
+};
 
 const EVENT_VERBS: Record<BoardEvent["kind"], string> = {
   "post.created": "posted",
@@ -226,34 +293,52 @@ const EVENT_VERBS: Record<BoardEvent["kind"], string> = {
   "post.closed": "closed",
 };
 
-function card(p: Post, open: boolean): string {
+function card(p: Post, now: number, opts: { open?: boolean; title?: string; number?: string } = {}): string {
   const meta = [
-    `${escapeHtml(p.authorLogin)} via ${escapeHtml(p.client)}`,
-    when(p.createdAt),
-    p.target ? `target ${escapeHtml(p.target)}` : "",
-    p.to ? `to ${escapeHtml(p.to)}` : "",
-    p.expiresAt ? `until ${when(p.expiresAt)}` : "",
+    p.type === "task" ? "" : `${escapeHtml(p.authorLogin)} via ${escapeHtml(p.client)}`,
+    stamp(p.createdAt, now),
+    p.target ? `on ${escapeHtml(p.target)}` : "",
+    p.to ? `for ${escapeHtml(p.to)}` : "",
   ]
     .filter(Boolean)
     .join(" · ");
+  const remaining = p.expiresAt ? Math.max(0, p.expiresAt - now) : 0;
+  const ttl = p.expiresAt
+    ? `<span class="ttl" role="img" aria-label="Claim expires ${relative(p.expiresAt, now)}"><span style="width:${Math.min(100, Math.round((remaining / Math.max(1, p.expiresAt - p.createdAt)) * 100))}%"></span></span><span class="meta">expires ${stamp(p.expiresAt, now)}</span>`
+    : "";
+  const label = opts.number ? `<span class="tag task">#${escapeHtml(opts.number)}</span>` : `<span class="tag ${escapeHtml(p.type)}">${escapeHtml(p.type)}</span>`;
   const body = p.body.trim() ? `<div class="body">${escapeHtml(p.body)}</div>` : "";
-  return `<details class="post"${open ? " open" : ""}><summary><span class="tag ${escapeHtml(p.type)}">${escapeHtml(p.type)}</span><span class="title">${escapeHtml(p.title)}</span>
-<span class="meta">${meta}</span></summary>${body}</details>`;
+  return `<details class="post"${opts.open ? " open" : ""}><summary>${label}<span class="title">${escapeHtml(opts.title ?? p.title)}</span>
+<span class="meta">${meta}</span>${ttl}</summary>${body}</details>`;
 }
 
-export function renderBoard(opts: { repo: string; login: string; board: Board; events: BoardEvent[] }): string {
+function taskGroups(tasks: Post[], now: number): string {
+  const groups = new Map<string, string[]>();
+  for (const t of tasks) {
+    const m = TASK_TITLE.exec(t.title);
+    const source = m ? (m[1] as string) : "Other";
+    groups.set(source, [...(groups.get(source) ?? []), m ? card(t, now, { title: m[3] as string, number: m[2] as string }) : card(t, now)]);
+  }
+  return [...groups]
+    .sort(([a], [b]) => (a === "Other" ? 1 : b === "Other" ? -1 : a.localeCompare(b)))
+    .map(([source, cards], i) => `<details class="group"${i === 0 ? " open" : ""}><summary><span>${escapeHtml(source)}</span><span class="count">${cards.length}</span></summary>${cards.join("")}</details>`)
+    .join("");
+}
+
+export function renderBoard(opts: { repo: string; login: string; board: Board; events: BoardEvent[]; now: number }): string {
   const { tasks, claims, recent } = opts.board;
-  const column = (title: string, posts: Post[], empty: string, open: boolean) =>
-    `<section class="column" aria-label="${title}"><h2>${title} <span>${posts.length}</span></h2>${posts.length ? posts.map((p) => card(p, open)).join("") : `<p class="empty">${empty}</p>`}</section>`;
+  const { now } = opts;
+  const column = (title: string, count: number, content: string, empty: string) =>
+    `<section class="column" aria-label="${title}"><h2>${title} <span>${count}</span></h2>${count ? content : `<p class="empty">${empty}</p>`}</section>`;
   const stat = (n: number, label: string) => `<span class="stat"><b>${n}</b> ${label}</span>`;
   return page(
     `${opts.repo} · Company Brain board`,
-    `<div class="eyebrow">Board · viewing as ${escapeHtml(opts.login)}</div><h1>${escapeHtml(opts.repo)}</h1>
+    `<div class="eyebrow">Board · viewing as ${escapeHtml(opts.login)}</div><h1>${escapeHtml(opts.repo).replace("/", "/<wbr>")}</h1>
 <div class="stats">${stat(tasks.length, "open tasks")}${stat(claims.length, "active claims")}${stat(recent.length, "recent findings and handoffs")}</div>
 <div class="columns">
-${column("Active claims", claims, "Nobody is working on anything right now.", true)}
-${column("Findings and handoffs", recent, "No findings or handoffs yet.", false)}
-${column("Open tasks", tasks, "No open tasks.", false)}
+${column("Active claims", claims.length, claims.map((p) => card(p, now, { open: true })).join(""), "Nobody holds a claim. Agents claim work with <code>board_post</code> type <code>claim</code> before they start.")}
+${column("Findings and handoffs", recent.length, recent.map((p) => card(p, now)).join(""), "Nothing recorded yet. Agents post what they learn as findings and pass work on with handoffs.")}
+${column("Open tasks", tasks.length, taskGroups(tasks, now), "No open tasks. Import a backlog with <code>scripts/import-backlog.ts</code>.")}
 </div>
 <h2>Activity</h2>
 ${
@@ -262,10 +347,10 @@ ${
             .reverse()
             .map(
               (e) =>
-                `<li><time datetime="${new Date(e.at).toISOString()}">${when(e.at)}</time><span class="lane ${escapeHtml(e.client)}">${escapeHtml(CLIENT_LABELS[e.client as AgentClient] ?? e.client)}</span><span><b>${escapeHtml(e.actorLogin)}</b> ${EVENT_VERBS[e.kind]} ${escapeHtml(e.postType)} <span class="title">${escapeHtml(e.title)}</span></span></li>`,
+                `<li>${stamp(e.at, now)}<span class="lane ${escapeHtml(e.client)}">${escapeHtml(CLIENT_LABELS[e.client as AgentClient] ?? e.client)}</span><span><b>${escapeHtml(e.actorLogin)}</b> ${EVENT_VERBS[e.kind]} ${escapeHtml(e.postType)} <span class="title">${escapeHtml(e.title)}</span></span></li>`,
             )
             .join("")}</ol>`
-        : `<p class="muted">No activity yet.</p>`
+        : `<p class="empty panel">No activity yet. Claims, posts, releases and closes appear here as agents work.</p>`
     }`,
     { signedIn: true },
   );

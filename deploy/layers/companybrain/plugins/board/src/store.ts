@@ -493,6 +493,14 @@ export function openStore(db: Database, now: () => number = Date.now) {
     ]);
   }
 
+  async function recentRepos(uid: number, limit = 6): Promise<string[]> {
+    const list = await rows<{ subject: string }>(
+      `SELECT subject FROM audit_log WHERE uid = $1 AND ok AND subject LIKE '%/%' GROUP BY subject ORDER BY MAX(at) DESC LIMIT $2`,
+      [uid, limit],
+    );
+    return list.map((r) => r.subject);
+  }
+
   async function auditTrail(uid: number, limit = 50): Promise<AuditEntry[]> {
     return rows(`SELECT at, client, tool, subject, ok FROM audit_log WHERE uid = $1 ORDER BY at DESC, id DESC LIMIT $2`, [uid, limit]);
   }
@@ -653,6 +661,7 @@ export function openStore(db: Database, now: () => number = Date.now) {
     events,
     audit,
     auditTrail,
+    recentRepos,
     insertToken,
     tokenByHash,
     touchToken,
