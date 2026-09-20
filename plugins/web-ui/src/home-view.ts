@@ -1,5 +1,5 @@
 import { html, nothing, type TemplateResult } from "lit";
-import { AlertTriangle, ArrowRight, Check, House, Inbox, KeyRound, ShieldCheck, Sparkles } from "lucide";
+import { AlertTriangle, ArrowRight, Check, Inbox, type IconNode } from "lucide";
 import { chip, emptyState, icon, relTime } from "./ui.ts";
 
 export interface HomeItem {
@@ -27,12 +27,24 @@ export interface HomeSummary {
   counts?: Record<string, number>;
 }
 
+export interface HomeFeature {
+  view: string;
+  label: string;
+  glyph: IconNode;
+  blurb: string;
+  count?: number;
+}
+
 export interface HomeTplOpts {
   user: string;
   data: HomeSummary | null;
   error: string;
   loading: boolean;
+  draft: string;
+  features: HomeFeature[];
   onOpen: (view: string) => void;
+  onAsk: (text: string) => void;
+  onDraft: (text: string) => void;
 }
 
 const ITEM_LABEL: Record<HomeItem["type"], { label: string; tone: "accent" | "warn" }> = {
@@ -45,17 +57,119 @@ const ITEM_ACTION: Record<HomeItem["type"], string> = {
   connector_broken: "Re-authorise",
 };
 
-export const FIRST_QUESTIONS = [
+export const SUGGESTIONS = [
+  "Summarise where each open deal stands",
   "What changed in my accounts this week?",
-  "Summarise where each open deal stands.",
-  "Draft a follow-up to the last customer who emailed me.",
+  "Draft a follow-up to the last customer who emailed me",
+  "Every Monday at 9, send me a pipeline digest",
 ];
 
-export function greeting(user: string, now = new Date()): string {
-  const hour = now.getHours();
-  const part = hour < 12 ? "morning" : hour < 18 ? "afternoon" : "evening";
-  const name = (user.split("@")[0] ?? user).split(/[.\-_]/)[0] ?? user;
-  return `Good ${part}, ${name}`;
+export interface JourneyStep {
+  id: string;
+  label: string;
+  detail: string;
+  done: boolean;
+  view: string;
+}
+
+export function journey(data: HomeSummary): JourneyStep[] {
+  const counts = data.counts ?? {};
+  const setup = (id: string): boolean => data.setup.find((s) => s.id === id)?.done ?? false;
+  return [
+    {
+      id: "connect",
+      label: "Connect a source",
+      detail: "Mail, calendar, files or a CRM. The agent reads only what you can read.",
+      done: setup("connector"),
+      view: "keychain",
+    },
+    { id: "ask", label: "Ask a question", detail: "Anything about the work you already do.", done: data.asked, view: "chats" },
+    {
+      id: "skill",
+      label: "Save it as a skill",
+      detail: "A skill does the same work the same way every time.",
+      done: (counts.skills ?? 0) > 0,
+      view: "skills",
+    },
+    {
+      id: "automate",
+      label: "Put it on a schedule",
+      detail: "Then it happens without you asking.",
+      done: (counts.crons ?? 0) > 0,
+      view: "crons",
+    },
+  ];
+}
+
+function askTpl(o: HomeTplOpts): TemplateResult {
+  const field = (e: Event): HTMLTextAreaElement =>
+    (e.currentTarget as HTMLElement).closest("form")?.querySelector(".home-ask-input") as HTMLTextAreaElement;
+  const send = (e: Event): void => {
+    const text = (field(e)?.value ?? o.draft).trim();
+    if (text) o.onAsk(text);
+  };
+  return html`
+    <section class="home-hero" aria-label="Ask">
+      <h1 class="home-ask-title">What do you want to do?</h1>
+      <p class="home-ask-lede">
+        Ask in your own words. The agent works from your own accounts, asks before it acts, and shows where each answer came
+        from.
+      </p>
+      <form
+        class="home-ask"
+        @submit=${(e: Event) => {
+          e.preventDefault();
+          send(e);
+        }}
+      >
+        <textarea
+          class="home-ask-input"
+          rows="1"
+          placeholder="Ask anything, or describe the job you want done…"
+          aria-label="Ask anything"
+          .value=${o.draft}
+          @input=${(e: Event) => o.onDraft((e.currentTarget as HTMLTextAreaElement).value)}
+          @keydown=${(e: KeyboardEvent) => {
+            if (e.key === "Enter" && !e.shiftKey) {
+              e.preventDefault();
+              send(e);
+            }
+          }}
+        ></textarea>
+        <button class="btn primary home-ask-send" type="submit" ?disabled=${!o.draft.trim()}>
+          Ask${icon(ArrowRight, 15)}
+        </button>
+      </form>
+      <ul class="home-suggestions">
+        ${SUGGESTIONS.map(
+          (s) => html`<li><button class="home-suggestion" type="button" @click=${() => o.onAsk(s)}>${s}</button></li>`,
+        )}
+      </ul>
+    </section>
+  `;
+}
+
+function journeyTpl(steps: JourneyStep[], onOpen: (view: string) => void): TemplateResult | typeof nothing {
+  const next = steps.findIndex((s) => !s.done);
+  if (next === -1) return nothing;
+  return html`
+    <section class="home-section" aria-label="Getting started">
+      <h2 class="home-section-title">
+        Getting started <span class="home-progress">${steps.filter((s) => s.done).length} of ${steps.length}</span>
+      </h2>
+      <ol class="home-journey">
+        ${steps.map(
+          (step, i) => html`<li class="home-journey-step ${step.done ? "done" : i === next ? "next" : ""}">
+            <span class="home-journey-mark">${step.done ? icon(Check, 13) : html`<span>${i + 1}</span>`}</span>
+            <button class="home-journey-body" type="button" @click=${() => onOpen(step.view)}>
+              <b>${step.label}</b>
+              <span>${step.detail}</span>
+            </button>
+          </li>`,
+        )}
+      </ol>
+    </section>
+  `;
 }
 
 function itemTpl(item: HomeItem, onOpen: (view: string) => void): TemplateResult {
@@ -72,87 +186,52 @@ function itemTpl(item: HomeItem, onOpen: (view: string) => void): TemplateResult
   </button>`;
 }
 
-function checklistTpl(steps: HomeStep[], onOpen: (view: string) => void): TemplateResult | typeof nothing {
-  const remaining = steps.filter((step) => !step.done);
-  if (!remaining.length) return nothing;
-  return html`<section class="home-section" aria-label="Finish setting up">
-    <h2 class="home-section-title">Finish setting up</h2>
-    <div class="home-card">
-      <p class="home-card-lede">
-        ${steps.length - remaining.length} of ${steps.length} done. The agent works better with each one.
-      </p>
-      <ol class="home-steps">
-        ${steps.map(
-          (step) => html`<li class=${step.done ? "done" : ""}>
-            <span class="home-step-mark">${step.done ? icon(Check, 14) : nothing}</span>
-            <div>
-              <b>${step.label}</b>
-              <p>${step.detail}</p>
-            </div>
-            ${
-              step.done || !step.view
-                ? nothing
-                : html`<button class="btn" type="button" @click=${() => onOpen(step.view as string)}>Open</button>`
-            }
-          </li>`,
-        )}
-      </ol>
-    </div>
-  </section>`;
+function needsTpl(o: HomeTplOpts): TemplateResult | typeof nothing {
+  const needs = o.data?.needs ?? [];
+  if (!o.data && !o.error) return nothing;
+  if (o.data && !needs.length) return nothing;
+  return html`
+    <section class="home-section" aria-label="Needs you">
+      <h2 class="home-section-title">
+        Needs you ${needs.length ? html`<span class="home-count">${needs.length}</span>` : nothing}
+      </h2>
+      ${
+        o.error && !o.data
+          ? html`<div class="home-card home-error">${icon(AlertTriangle, 16)}<span>${o.error}</span></div>`
+          : html`<div class="home-needs">${needs.map((item) => itemTpl(item, o.onOpen))}</div>`
+      }
+    </section>
+  `;
 }
 
-function welcomeTpl(onOpen: (view: string) => void): TemplateResult {
-  return html`<section class="home-section" aria-label="Welcome">
-    <div class="home-card home-welcome">
-      <span class="home-welcome-icon">${icon(Sparkles, 20)}</span>
-      <h2>Ask your first question</h2>
-      <p>
-        The agent reads only what your own accounts can already reach, and asks before it acts. Start with one of these, or
-        anything else.
-      </p>
-      <ul class="home-prompts">
-        ${FIRST_QUESTIONS.map(
-          (q) => html`<li><button class="btn" type="button" @click=${() => onOpen("chats")}>${q}</button></li>`,
+function featuresTpl(features: HomeFeature[], onOpen: (view: string) => void): TemplateResult {
+  return html`
+    <section class="home-section" aria-label="Everything you can do">
+      <h2 class="home-section-title">Everything you can do</h2>
+      <div class="home-features">
+        ${features.map(
+          (f) => html`<button class="home-feature" type="button" @click=${() => onOpen(f.view)}>
+            <span class="home-feature-icon">${icon(f.glyph, 17)}</span>
+            <span class="home-feature-copy">
+              <b>${f.label}${f.count ? html`<span class="home-feature-count">${f.count}</span>` : nothing}</b>
+              <span class="home-feature-blurb">${f.blurb}</span>
+            </span>
+            <span class="home-feature-go">${icon(ArrowRight, 15)}</span>
+          </button>`,
         )}
-      </ul>
-      <p class="home-welcome-foot">
-        ${icon(ShieldCheck, 15)}<span>Nothing is shared with your team unless you post it.</span>
-      </p>
-    </div>
-  </section>`;
+      </div>
+    </section>
+  `;
 }
 
 export function homeTpl(o: HomeTplOpts): TemplateResult {
-  const needs = o.data?.needs ?? [];
   return html`
     <div class="home">
-      <div class="home-head">
-        <span class="home-eyebrow">${icon(House, 15)}<span>Home</span></span>
-        <h1 class="home-title">${greeting(o.user)}</h1>
-      </div>
-      ${o.error ? html`<div class="home-card home-error">${icon(AlertTriangle, 16)}<span>${o.error}</span></div>` : nothing}
-      ${o.data ? checklistTpl(o.data.setup, o.onOpen) : nothing}
-      ${o.data && !o.data.asked ? welcomeTpl(o.onOpen) : nothing}
-      <section class="home-section" aria-label="Needs you">
-        <h2 class="home-section-title">
-          Needs you ${needs.length ? html`<span class="home-count">${needs.length}</span>` : nothing}
-        </h2>
-        ${
-          !o.data
-            ? html`<p class="empty compact">${o.error ? "Not loaded." : "Loading…"}</p>`
-            : needs.length
-              ? html`<div class="home-needs">${needs.map((item) => itemTpl(item, o.onOpen))}</div>`
-              : emptyState({
-                  glyph: Inbox,
-                  headline: "Nothing needs you",
-                  body: "Approvals waiting on you and connections that stopped working show up here.",
-                  action: { label: "Ask something", onClick: () => o.onOpen("chats") },
-                })
-        }
-      </section>
-      <p class="home-foot">
-        ${icon(KeyRound, 14)}<span>Items clear themselves once the thing behind them is resolved.</span>
-      </p>
+      ${askTpl(o)} ${o.data ? journeyTpl(journey(o.data), o.onOpen) : nothing} ${needsTpl(o)}
+      ${featuresTpl(o.features, o.onOpen)}
+      ${o.loading && !o.data ? html`<p class="home-foot">Loading what needs you…</p>` : nothing}
     </div>
   `;
 }
+
+export { emptyState as homeEmptyState };

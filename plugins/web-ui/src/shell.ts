@@ -8,6 +8,7 @@ import {
   Files,
   Folder,
   House,
+  Network,
   KeyRound,
   LogOut,
   MessageSquare,
@@ -68,6 +69,7 @@ import { renderCronsPage, resetActiveCron } from "./crons";
 import { renderFiles } from "./files";
 import { clearConnectorNotice, noteConnectorResult, renderConnectors, resetKeychainState } from "./connectors";
 import { renderDeploys } from "./deploys";
+import { renderBrainMap, resetBrainMapState } from "./brain-map-data";
 import { renderHome, resetHomeState } from "./home";
 import { renderMemory, resetMemoryState } from "./memory";
 import { renderSkills } from "./skills";
@@ -195,6 +197,7 @@ function toggleNavGroup(group: string): void {
 const ICON = {
   newChat: Plus,
   home: House,
+  brain: Network,
   chats: MessageSquare,
   contexts: Folder,
   files: Files,
@@ -208,6 +211,7 @@ const ICON = {
 export const NAV: ReadonlyArray<{ view: View; glyph: IconNode; label: string; group: string }> = [
   { view: "home", glyph: ICON.home, label: "Home", group: "" },
   { view: "chats", glyph: ICON.chats, label: "Ask", group: "Work" },
+  { view: "brain", glyph: ICON.brain, label: "Brain", group: "Work" },
   { view: "contexts", glyph: ICON.contexts, label: "Projects", group: "Work" },
   { view: "files", glyph: ICON.files, label: "Files", group: "Work" },
   { view: "skills", glyph: ICON.skills, label: "Skills", group: "Build" },
@@ -236,6 +240,7 @@ export async function signOut(): Promise<void> {
   composerState.skillsCache = null;
   resetMemoryState();
   resetHomeState();
+  resetBrainMapState();
   resetContextsState();
   resetKeychainState();
   resetComposer();
@@ -531,6 +536,14 @@ export function mountShell(): void {
   shellMounted = true;
 }
 
+function mountBrainMap(): void {
+  if (!appState.mainEl) return;
+  const host = document.createElement("div");
+  host.className = "pane brain-pane";
+  replacePanePreservingFocus(host);
+  void renderBrainMap(host);
+}
+
 export function renderSidebarTop(): void {
   if (!appState.topEl) return;
   const navRow = (v: View, glyph: IconNode, label: string) => {
@@ -661,6 +674,9 @@ export function switchView(v: View): void {
     case "home":
       void renderHome();
       break;
+    case "brain":
+      mountBrainMap();
+      break;
   }
 }
 
@@ -694,6 +710,9 @@ function refreshActiveView(v: View): void {
       break;
     case "home":
       void renderHome();
+      break;
+    case "brain":
+      mountBrainMap();
       break;
   }
 }

@@ -1,4 +1,5 @@
 import type { AuditEntry, Board, BoardEvent, Post, TokenRow } from "./store.ts";
+import { swimlaneTpl, type SwimlaneEvent } from "./swimlane.ts";
 import { AGENT_CLIENTS, type AgentClient } from "./token.ts";
 
 export function escapeHtml(value: string): string {
@@ -325,7 +326,7 @@ function taskGroups(tasks: Post[], now: number): string {
     .join("");
 }
 
-export function renderBoard(opts: { repo: string; login: string; board: Board; events: BoardEvent[]; now: number }): string {
+export function renderBoard(opts: { repo: string; login: string; board: Board; events: BoardEvent[]; timeline: SwimlaneEvent[]; now: number }): string {
   const { tasks, claims, recent } = opts.board;
   const { now } = opts;
   const column = (title: string, count: number, content: string, empty: string) =>
@@ -340,6 +341,8 @@ ${column("Active claims", claims.length, claims.map((p) => card(p, now, { open: 
 ${column("Findings and handoffs", recent.length, recent.map((p) => card(p, now)).join(""), "Nothing recorded yet. Agents post what they learn as findings and pass work on with handoffs.")}
 ${column("Open tasks", tasks.length, taskGroups(tasks, now), "No open tasks. Import a backlog with <code>scripts/import-backlog.ts</code>.")}
 </div>
+<h2>Lanes</h2>
+${swimlaneTpl({ events: opts.timeline, now })}
 <h2>Activity</h2>
 ${
       opts.events.length

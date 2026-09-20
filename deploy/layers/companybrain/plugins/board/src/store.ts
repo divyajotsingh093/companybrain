@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { posix } from "node:path";
 import type { Database, Param, Query } from "./db.ts";
+import type { SwimlaneEvent } from "./swimlane.ts";
 import { cleanLine } from "./untrusted.ts";
 
 export const POST_TYPES = ["task", "claim", "finding", "handoff"] as const;
@@ -508,6 +509,43 @@ export function openStore(db: Database, now: () => number = Date.now) {
     return list.map((e) => ({ id: e.id, at: e.at, kind: e.kind, postId: e.post_id, postType: e.post_type, title: e.title, actorLogin: e.actor_login, client: e.client }));
   }
 
+  async function timeline(repoId: number, opts: { limit?: number } = {}): Promise<SwimlaneEvent[]> {
+    const limit = Math.min(Math.max(opts.limit ?? 50, 1), 200);
+    const list = await rows<{
+      id: number;
+      at: number;
+      kind: EventKind;
+      post_id: string;
+      post_type: PostType;
+      title: string;
+      actor_login: string;
+      client: string;
+      recipient: string | null;
+      expires_at: number | null;
+      released_at: number | null;
+      closed_at: number | null;
+    }>(
+      `SELECT e.id, e.at, e.kind, e.post_id, e.post_type, e.title, e.actor_login, e.client, p.recipient, p.expires_at, p.released_at, p.closed_at
+       FROM (SELECT * FROM board_events WHERE repo_id = $1 ORDER BY id DESC LIMIT $2) e
+       LEFT JOIN posts p ON p.id = e.post_id ORDER BY e.id ASC`,
+      [repoId, limit],
+    );
+    return list.map((e) => ({
+      id: e.id,
+      at: e.at,
+      kind: e.kind,
+      postId: e.post_id,
+      postType: e.post_type,
+      title: e.title,
+      actorLogin: e.actor_login,
+      client: e.client,
+      recipient: e.recipient,
+      expiresAt: e.expires_at,
+      releasedAt: e.released_at,
+      closedAt: e.closed_at,
+    }));
+  }
+
   async function audit(entry: { uid: number; tokenId: string; client: string; tool: string; subject: string | null; ok: boolean }): Promise<void> {
     await changed(`INSERT INTO audit_log (at, uid, token_id, client, tool, subject, ok) VALUES ($1, $2, $3, $4, $5, $6, $7)`, [
       now(),
@@ -686,6 +724,7 @@ export function openStore(db: Database, now: () => number = Date.now) {
     hasTask,
     closePost,
     events,
+    timeline,
     inbox,
     audit,
     auditTrail,

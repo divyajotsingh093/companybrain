@@ -204,7 +204,7 @@ export function createApp(deps: AppDeps): Hono {
     try {
       const a = await access.check(principal.uid, principal.login, repo);
       if (!canUseBoard(a.role)) return c.html(renderDenied(), 404);
-      return c.html(renderBoard({ repo: a.fullName, login: principal.login, board: await store.readBoard(a.repoId, { limit: 100 }), events: await store.events(a.repoId, { limit: 40 }), now: now() }));
+      return c.html(renderBoard({ repo: a.fullName, login: principal.login, board: await store.readBoard(a.repoId, { limit: 100 }), events: await store.events(a.repoId, { limit: 40 }), timeline: await store.timeline(a.repoId, { limit: 60 }), now: now() }));
     } catch (err) {
       if (!(err instanceof GitHubError) || err.kind === "unauthorized" || err.kind === "rate_limited" || err.kind === "unavailable") {
         return c.html(renderMessage("GitHub problem", "GitHub could not confirm your access right now. Reconnect or try again shortly."), 503);

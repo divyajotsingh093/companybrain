@@ -69,7 +69,7 @@ test("the nav map lists every view once, and each row carries a label, icon and 
   assert.deepEqual(views.slice(0, 1), ["home"], "Home is the first row");
   assert.deepEqual(
     rows.map((r) => r[3]),
-    ["Home", "Ask", "Projects", "Files", "Skills", "Automations", "Apps", "Keychain", "Memory"],
+    ["Home", "Ask", "Brain", "Projects", "Files", "Skills", "Automations", "Apps", "Keychain", "Memory"],
   );
   assert.deepEqual([...new Set(rows.map((r) => r[4]).filter(Boolean))], ["Work", "Build", "Settings"]);
 });
