@@ -20,8 +20,7 @@ them. Triggers, monitors and sandboxes have no UI at all.
 
 From Merge (docs.merge.dev, help.merge.dev): typed issues that resolve themselves, and connection repair that
 keeps the same connection. From Runlayer (docs.runlayer.com): request-then-approve as the default path for members,
-and activity split from audit. From [Sim](../analysis/sim.md): per-run traces. Sources and the
-full list are in the research note for this spec's stage 2 and 3 items.
+and activity split from audit. From [Sim](../analysis/sim.md): per-run traces.
 
 ## Stage 1 — Design system and app shell
 
