@@ -15,8 +15,10 @@ export const ACTIVE_AGENT_TOKENS_PER_USER = 20;
 export const MAX_POSTS_PER_REPO = 5_000;
 const RETAIN_POSTS_MS = 180 * 24 * 3_600_000;
 const RETAIN_AUDIT_MS = 30 * 24 * 3_600_000;
+const EXPIRING_SOON_MS = 30 * 60_000;
 export const MAX_AUDIT_PER_USER = 2_000;
 export const ACTIVE_CLAIMS_PER_USER = 10;
+export const HANDOFFS_PER_PAIR_PER_HOUR = 8;
 const HOUR_MS = 3_600_000;
 const RETAIN_EXPIRED_MS = 7 * 24 * HOUR_MS;
 
@@ -56,7 +58,7 @@ export interface NewPost {
 export type AddResult =
   | { ok: true; post: Post; renewed: boolean }
   | { ok: false; reason: "conflict"; conflict: Post }
-  | { ok: false; reason: "post_quota" | "claim_quota" };
+  | { ok: false; reason: "post_quota" | "claim_quota" | "handoff_loop" };
 
 export interface Board {
   tasks: Post[];
@@ -367,6 +369,14 @@ export function openStore(db: Database, now: () => number = Date.now) {
         const everywhere = await count(tx, `SELECT COUNT(*) AS n FROM posts WHERE author_uid = $1 AND created_at > $2`, [p.authorUid, createdAt - HOUR_MS]);
         if (everywhere >= POSTS_PER_USER_PER_HOUR) return { ok: false, reason: "post_quota" } as const;
       }
+      if (!p.system && p.type === "handoff" && p.to) {
+        const pair = await count(
+          tx,
+          `SELECT COUNT(*) AS n FROM posts WHERE repo_id = $1 AND type = 'handoff' AND author_uid = $2 AND recipient = $3 AND created_at > $4`,
+          [p.repoId, p.authorUid, p.to, createdAt - HOUR_MS],
+        );
+        if (pair >= HANDOFFS_PER_PAIR_PER_HOUR) return { ok: false, reason: "handoff_loop" } as const;
+      }
       let target = p.target ?? null;
       let expiresAt: number | null = null;
       if (p.type === "claim") {
@@ -468,6 +478,23 @@ export function openStore(db: Database, now: () => number = Date.now) {
       await recordEvent(tx, repoId, at, "post.closed", { id, ...row }, actor);
       return true;
     });
+  }
+
+  async function inbox(opts: { uid: number; login: string; client: string; now: number; limit: number }): Promise<{ handoffs: Post[]; expiring: Post[] }> {
+    const [handoffs, expiring] = await Promise.all([
+      rows<PostRow>(
+        `SELECT * FROM posts WHERE type = 'handoff' AND closed_at IS NULL AND recipient IN ($1, $2) AND created_at > $3
+         ORDER BY created_at DESC, id DESC LIMIT $4`,
+        [opts.login, opts.client, opts.now - RETAIN_EXPIRED_MS, opts.limit],
+      ),
+      rows<PostRow>(
+        `SELECT * FROM posts WHERE type = 'claim' AND author_uid = $1 AND client = $2 AND released_at IS NULL
+           AND expires_at > $3 AND expires_at < $4
+         ORDER BY expires_at ASC LIMIT $5`,
+        [opts.uid, opts.client, opts.now, opts.now + EXPIRING_SOON_MS, opts.limit],
+      ),
+    ]);
+    return { handoffs: handoffs.map(toPost), expiring: expiring.map(toPost) };
   }
 
   async function events(repoId: number, opts: { after?: number; limit?: number } = {}): Promise<BoardEvent[]> {
@@ -659,6 +686,7 @@ export function openStore(db: Database, now: () => number = Date.now) {
     hasTask,
     closePost,
     events,
+    inbox,
     audit,
     auditTrail,
     recentRepos,

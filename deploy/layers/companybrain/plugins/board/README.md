@@ -31,6 +31,8 @@ Slice 0 of [`docs/backlog/agent-board.md`](../../../../../docs/backlog/agent-boa
   instances, under a Postgres advisory lock). A refresh
   token GitHub rejects is discarded rather than retried; a GitHub outage during refresh is
   reported as unavailable and keeps it.
+- **Loops are cut short.** One agent may hand the same repository off to the same recipient 8 times
+  an hour; after that it is told to finish the work or ask a human.
 - **Limits:** 256 KB MCP and 4 KB form bodies, no JSON-RPC batches,
   `BOARD_REQUESTS_PER_MINUTE` per user (shared across that user's tokens and every instance), 20 active agent
   tokens per user, 60 posts an hour per repository and 200 across all repositories per user,
@@ -41,6 +43,9 @@ Slice 0 of [`docs/backlog/agent-board.md`](../../../../../docs/backlog/agent-boa
   "Revoke all tokens and sign out" also deletes the stored GitHub credential.
 - **Web hardening:** a strict content security policy, HSTS on https, same-origin checks on
   every form post, and sign-in errors shown from fixed messages only.
+
+Agents start a session with `board_inbox`: handoffs addressed to them and their own claims about to
+expire, across every repository they can reach.
 
 Not yet built: OAuth sign-in for MCP clients (bearer tokens only) and approval-gated writes. Agents can write only to the board, never to GitHub.
 

@@ -3,15 +3,26 @@ import { z } from "zod";
 import { type AccessChecker, canModerate, canUseBoard, type RepoAccess } from "./access.ts";
 import type { Principal } from "./auth.ts";
 import { assertRepo, GitHubError, type GitHubClient, MAX_FILE_BYTES } from "./github.ts";
-import { AGENT_POST_TYPES, MAX_CLAIM_MINUTES, POST_TYPES, POSTS_PER_HOUR, ACTIVE_CLAIMS_PER_USER, type Post, type Store } from "./store.ts";
+import {
+  ACTIVE_CLAIMS_PER_USER,
+  AGENT_POST_TYPES,
+  HANDOFFS_PER_PAIR_PER_HOUR,
+  MAX_CLAIM_MINUTES,
+  POST_TYPES,
+  POSTS_PER_HOUR,
+  type Post,
+  type Store,
+} from "./store.ts";
 import { clamp, cleanLine, createFence, type Fence, UNTRUSTED_NOTE } from "./untrusted.ts";
 
 const MAX_FILE_CHARS = 60_000;
 const MAX_README_CHARS = 4_000;
 const MAX_POST_BODY_CHARS = 2_000;
+const INBOX_REPO_LIMIT = 10;
 
 export const INSTRUCTIONS = [
   "Company Brain board: shared context and coordination for agents working on GitHub repositories.",
+  "At the start of a session, call board_inbox to see what was handed to you and which of your claims are about to expire.",
   "Before starting work on a repository, call board_read to see open tasks, active claims, findings and handoffs. During long sessions, call board_events with your last cursor to see what other agents changed.",
   "Post a claim with board_post before changing something another agent might also change; post it again to renew it, and release it with board_release when done.",
   "Record what you learn as a finding and pass unfinished work on with a handoff.",
@@ -35,6 +46,7 @@ const failure = (value: string): Result => ({ content: [{ type: "text", text: va
 export const TOOL_NAMES: ReadonlySet<string> = new Set([
   "board_close",
   "board_events",
+  "board_inbox",
   "board_post",
   "board_read",
   "board_release",
@@ -293,6 +305,11 @@ export function createBoardServer(deps: BoardDeps): McpServer {
           ...(ttl_minutes ? { ttlMinutes: ttl_minutes } : {}),
         });
         if (result.ok) return text(`${result.renewed ? "Renewed" : "Posted"} ${result.post.type} ${result.post.id}.`);
+        if (result.reason === "handoff_loop") {
+          return failure(
+            `You have handed off to ${cleanTo} ${HANDOFFS_PER_PAIR_PER_HOUR} times in the last hour on this repository. Finish the work or ask a human, rather than passing it back again.`,
+          );
+        }
         if (result.reason !== "conflict") {
           return failure(
             result.reason === "post_quota"
@@ -306,6 +323,53 @@ export function createBoardServer(deps: BoardDeps): McpServer {
             `board:${c.repoName}`,
             `by: ${c.authorLogin} via ${c.client}`,
           )}`,
+        );
+      }),
+  );
+
+  server.registerTool(
+    "board_inbox",
+    {
+      description:
+        "What is waiting for you across every repository you can reach: handoffs addressed to you or to this client, and your own claims about to expire. Call it at the start of a session.",
+      inputSchema: { limit: z.number().int().min(1).max(50).optional() },
+      annotations: { readOnlyHint: true },
+    },
+    ({ limit }) =>
+      guard(async () => {
+        const found = await store.inbox({
+          uid: principal.uid,
+          login: principal.login,
+          client: principal.client,
+          now: deps.now(),
+          limit: limit ?? 20,
+        });
+        const reachable = new Map<number, string>();
+        const allowed = async (post: Post): Promise<boolean> => {
+          if (reachable.has(post.repoId)) return reachable.get(post.repoId) !== "";
+          if (reachable.size >= INBOX_REPO_LIMIT) return false;
+          try {
+            const a = await accessToPost(post);
+            reachable.set(post.repoId, a.fullName);
+            return true;
+          } catch {
+            reachable.set(post.repoId, "");
+            return false;
+          }
+        };
+        const keep = async (posts: Post[]): Promise<Post[]> => {
+          const out: Post[] = [];
+          for (const post of posts) if (await allowed(post)) out.push(post);
+          return out;
+        };
+        const handoffs = await keep(found.handoffs);
+        const expiring = await keep(found.expiring);
+        if (!handoffs.length && !expiring.length) return text("Nothing is waiting for you.");
+        const fence = createFence();
+        const section = (title: string, posts: Post[]) =>
+          posts.length ? `## ${title}\n\n${posts.map((p) => renderPost(p, fence)).join("\n\n")}` : "";
+        return text(
+          [section("Handed off to you", handoffs), section("Your claims expiring soon", expiring)].filter(Boolean).join("\n\n"),
         );
       }),
   );
