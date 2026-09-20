@@ -4,12 +4,13 @@ import { bodyLimit } from "hono/body-limit";
 import { deleteCookie, getCookie, setCookie } from "hono/cookie";
 import { randomBytes } from "node:crypto";
 import type { AccessChecker } from "./access.ts";
-import { canUseBoard } from "./access.ts";
+import { canModerate, canUseBoard } from "./access.ts";
 import type { Auth, Principal } from "./auth.ts";
 import type { Config } from "./config.ts";
 import { assertRepo, exchangeCode, type Fetch, type GitHubClient, GitHubError } from "./github.ts";
 import type { RateLimiter } from "./limits.ts";
-import { createBoardServer, TOOL_NAMES } from "./mcp.ts";
+import { APP_JS_BASE64 } from "./app-bundle.ts";
+import { createBoardServer, describeError, TOOL_NAMES } from "./mcp.ts";
 import { cleanLine } from "./untrusted.ts";
 import { ACTIVE_AGENT_TOKENS_PER_USER, type Store } from "./store.ts";
 import { hashToken, isAgentClient, seal, unseal } from "./token.ts";
@@ -50,7 +51,7 @@ export function createApp(deps: AppDeps): Hono {
     if (c.res.headers.get("content-type")?.startsWith("text/html")) {
       c.header("cache-control", "no-store");
       c.header("x-frame-options", "DENY");
-      c.header("content-security-policy", CSP);
+      if (!c.res.headers.get("content-security-policy")) c.header("content-security-policy", CSP);
     }
   });
 
@@ -210,6 +211,71 @@ export function createApp(deps: AppDeps): Hono {
         return c.html(renderMessage("GitHub problem", "GitHub could not confirm your access right now. Reconnect or try again shortly."), 503);
       }
       return c.html(renderDenied(), 404);
+    }
+  });
+
+  const appJs = Buffer.from(APP_JS_BASE64, "base64").toString("utf8");
+
+  app.get("/app", async (c) => {
+    if (!(await session(c))) return c.redirect("/");
+    c.header("content-security-policy", "default-src 'none'; script-src 'self'; style-src 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; connect-src 'self'; img-src 'self' data:; form-action 'self'; frame-ancestors 'none'; base-uri 'none'");
+    c.header("cache-control", "no-store");
+    return c.html(
+      `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Company Brain</title></head><body><div id="root"></div><script type="module" src="/app/bundle.js"></script></body></html>`,
+    );
+  });
+
+  app.get("/app/bundle.js", async (c) => {
+    if (!(await session(c))) return c.text("", 401);
+    c.header("content-type", "text/javascript; charset=utf-8");
+    c.header("cache-control", "no-store");
+    return c.body(appJs);
+  });
+
+  app.get("/api/app/me", async (c) => {
+    const principal = await session(c);
+    if (!principal) return c.json({ error: "sign_in" }, 401);
+    try {
+      const github = githubFor(await auth.githubToken(principal.uid));
+      const repos = await github.listRepos(12);
+      return c.json({
+        login: principal.login,
+        repos: repos.map((repo) => ({ fullName: repo.fullName, private: repo.private, pushedAt: repo.pushedAt })),
+        tokens: (await store.activeTokens(principal.uid, "agent")).map((t) => ({
+          id: t.id,
+          client: t.client,
+          createdAt: t.createdAt,
+          lastUsedAt: t.lastUsedAt,
+          expiresAt: t.expiresAt,
+        })),
+        activity: await store.auditTrail(principal.uid, 12),
+      });
+    } catch (err) {
+      return c.json({ error: "github", message: describeError(err instanceof GitHubError ? err : new GitHubError(503, "unavailable", ""), config.publicUrl) }, 200);
+    }
+  });
+
+  app.get("/api/app/board", async (c) => {
+    const principal = await session(c);
+    if (!principal) return c.json({ error: "sign_in" }, 401);
+    const repo = (c.req.query("repo") ?? "").trim();
+    try {
+      const a = await access.check(principal.uid, principal.login, assertRepo(repo));
+      if (!canUseBoard(a.role)) return c.json({ error: "no_access" }, 404);
+      const board = await store.readBoard(a.repoId, { limit: 100 });
+      return c.json({
+        repo: a.fullName,
+        role: a.role,
+        moderator: canModerate(a.role),
+        tasks: board.tasks,
+        claims: board.claims,
+        recent: board.recent,
+        events: await store.events(a.repoId, { limit: 40 }),
+        now: now(),
+      });
+    } catch {
+      return c.json({ error: "no_access" }, 404);
     }
   });
 
