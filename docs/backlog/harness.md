@@ -97,3 +97,11 @@ Capabilities of the qm agent harness itself. Items marked upstreamable are gener
 - **Why:** Sim freezes a snapshot of each workflow run and versions deployments, but its SKILL.md skills are unversioned. A governed CRM action is only auditable if we can say which skill text produced it. Also extends #7: a parked run resumes on the version it started with, and approval-form fields become inputs to later steps, as in Sim's human-in-the-loop block.
 - **Sources:** Competitors stream: Sim logs and deployment docs, human-in-the-loop block ([analysis](../analysis/sim.md))
 - **Repo paths:** `src/skills/skill-store.ts`, `src/runs/run-store.ts`, `src/runs/tool-ledger.ts`
+
+## 13. Failure signatures from run receipts become a proposed skill edit
+
+- **Effort:** M · **H0:** supports · **Upstreamable:** yes · **Depends on:** #9, #12
+- **Change:** Cluster failed run receipts by signature (tool error class, approval denial, out-of-envelope call, version-mismatch refusal). When a cluster passes a threshold, the model proposes a minimal edit to the skill — as a diff against named sections, never a rewrite — carrying the failure evidence. A human approves it, and promotion runs the gate in company-brain #8. Denials are first-class training signal: a denied approval is a labelled "do not do this" with a human's reason attached.
+- **Why:** Self-Harness reports large gains from exactly this loop with frozen weights, and our receipts (#9) are a better trace substrate than theirs because they are assembled only from observed records, never agent narration. The editable surface is an allowlist — instructions, examples, tool usage guidance, recovery steps — and never requiredCapabilities, credentials, envelope action sets, autonomy level or knowledge-access mode, because an agent that learns "the run failed because an approval was denied" will otherwise propose removing the approval.
+- **Sources:** [analysis](../analysis/self-learning-harness.md): Self-Harness (arXiv:2606.09498), ACE (2510.04618), ReasoningBank (2509.25140)
+- **Repo paths:** `src/runs/run-activity-store.ts`, `src/skills/skill-store.ts`, `src/api/routes/skills.ts`

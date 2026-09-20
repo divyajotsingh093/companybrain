@@ -81,3 +81,19 @@ Product work specific to Company Brain: the knowledge substrate, ACL mirroring, 
 - **Why:** Sim ships access requests alongside permission-aware Search. Without it, a governed brain looks worse than an ungoverned one: answers silently miss. Build it ourselves; Sim's implementation is in its restrictively licensed `ee/` directory.
 - **Sources:** Competitors stream: Sim v0.8.40-47 access requests ([analysis](../analysis/sim.md))
 - **Repo paths:** `src/acl/acl-store.ts`, `docs/architecture.md`
+
+## 11. Skill edits land as deltas against named sections
+
+- **Effort:** S · **H0:** supports · **Upstreamable:** no
+- **Change:** A proposed skill edit is a structured delta against named sections, applied by deterministic merge logic, never a model-authored rewrite of the whole file. The review surface shows the diff; a proposal over a threshold of changed lines is refused rather than shown.
+- **Why:** ACE's central result is that whole-context rewriting collapses through a telephone game, while localized edits merged deterministically preserve knowledge. It is also what makes harness #13 reviewable at all: a reviewer diffs three lines, not three pages.
+- **Sources:** [analysis](../analysis/self-learning-harness.md): ACE (arXiv:2510.04618)
+- **Repo paths:** `src/skills/skill-store.ts`, `src/skills/normalize.ts`
+
+## 12. Board findings distil per skill, scoped by the skill's ACL
+
+- **Effort:** M · **H0:** supports · **Upstreamable:** no
+- **Change:** Recurring findings on the agent board distil into reusable items ({title, description, content}) attached to a skill, not to a user and never to a shared pool. Distilled items are derived rows and join back to the ACL at query time like any other (#4). Both wins and failures are distilled, because failure-derived items are what improve behaviour most.
+- **Why:** The board already carries claims, findings, handoffs and events across four agent clients — a reasoning corpus we have and competitors do not. The pressure to pool it across principals must be refused: a distilled item derived from one principal's documents launders their content through paraphrase, so document-id canaries would not catch the leak.
+- **Sources:** [analysis](../analysis/self-learning-harness.md): ReasoningBank (arXiv:2509.25140), safety risks in self-evolving agents (2604.16968)
+- **Repo paths:** `deploy/layers/companybrain/plugins/board/src/store.ts`, `src/acl/acl-store.ts`
