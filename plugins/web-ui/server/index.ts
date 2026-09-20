@@ -635,17 +635,36 @@ async function setupSteps(user: string): Promise<HomeStep[]> {
   ];
 }
 
-async function homeSummary(user: string): Promise<{ needs: HomeItem[]; setup: HomeStep[]; asked: boolean }> {
-  const [approvals, connectors, setup, sessions] = await Promise.all([
+async function viewCounts(user: string): Promise<Record<string, number>> {
+  const principal = `principalId=${encodeURIComponent(user)}`;
+  const [skills, crons, projects, apps] = await Promise.all([
+    coreJson<{ skills?: unknown[] }>("GET", `/v1/skills?${principal}`),
+    coreJson<{ visible?: unknown[]; crons?: unknown[] }>("GET", `/v1/crons?viewer=${encodeURIComponent(user)}`),
+    coreJson<{ contexts?: unknown[] }>("GET", `/v1/contexts?${principal}`),
+    coreJson<{ deployments?: unknown[] }>("GET", `/v1/deployments?${principal}`),
+  ]);
+  const size = (list: unknown[] | undefined): number => (Array.isArray(list) ? list.length : 0);
+  return {
+    skills: size(skills?.skills),
+    crons: size(crons?.visible ?? crons?.crons),
+    contexts: size(projects?.contexts),
+    deploys: size(apps?.deployments),
+  };
+}
+
+async function homeSummary(user: string): Promise<{ needs: HomeItem[]; setup: HomeStep[]; asked: boolean; counts: Record<string, number> }> {
+  const [approvals, connectors, setup, sessions, counts] = await Promise.all([
     approvalItems(user),
     connectorItems(user),
     setupSteps(user),
     coreJson<{ sessions?: unknown[] }>("GET", `/v1/sessions?principalId=${encodeURIComponent(user)}`),
+    viewCounts(user),
   ]);
   return {
     needs: [...approvals, ...connectors],
     setup,
     asked: (sessions?.sessions ?? []).length > 0,
+    counts,
   };
 }
 

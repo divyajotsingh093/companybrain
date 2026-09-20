@@ -533,10 +533,13 @@ export function mountShell(): void {
 
 export function renderSidebarTop(): void {
   if (!appState.topEl) return;
-  const navRow = (v: View, glyph: IconNode, label: string) =>
-    html`<button class="navrow ${appState.currentView === v ? "active" : ""}" type="button" data-view=${v}>
+  const navRow = (v: View, glyph: IconNode, label: string) => {
+    const count = appState.viewCounts[v];
+    return html`<button class="navrow ${appState.currentView === v ? "active" : ""}" type="button" data-view=${v}>
       ${icon(glyph, 17)}<span>${label}</span>
+      ${count ? html`<span class="navrow-count">${count}</span>` : nothing}
     </button>`;
+  };
   const navGroup = (id: string, title: string, open: boolean, toggle: () => void, rows: TemplateResult) => html`
     <button
       class="nav-section-toggle"

@@ -2,7 +2,7 @@ import { render } from "lit";
 import { api } from "./core-bridge";
 import { errMessage } from "../../chassis/src/errors";
 import { homeTpl, type HomeSummary } from "./home-view.ts";
-import { replacePanePreservingFocus, switchView } from "./shell";
+import { renderSidebarTop, replacePanePreservingFocus, switchView } from "./shell";
 import { appState, isView, type View } from "./shell-state";
 
 let summary: HomeSummary | null = null;
@@ -11,6 +11,7 @@ let loading = false;
 
 export function resetHomeState(): void {
   summary = null;
+  appState.viewCounts = {};
   loadError = "";
   loading = false;
 }
@@ -33,6 +34,8 @@ export async function renderHome(): Promise<void> {
   draw();
   try {
     summary = await api<HomeSummary>("/api/home");
+    appState.viewCounts = (summary.counts ?? {}) as Partial<Record<View, number>>;
+    renderSidebarTop();
   } catch (err) {
     loadError = errMessage(err, "Home could not load what needs you. Try again shortly.");
   } finally {

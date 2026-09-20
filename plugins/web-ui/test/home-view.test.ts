@@ -69,10 +69,12 @@ test("each inbox item states its kind, what it is, and one action", () => {
   assert.equal(items.length, 2);
   assert.equal(items[0]?.querySelector(".badge")?.textContent, "approval");
   assert.equal(items[0]?.querySelector(".badge")?.className, "badge accent");
-  assert.equal(items[0]?.querySelector(".btn")?.textContent, "Open the conversation");
+  assert.match(items[0]?.querySelector(".home-item-action")?.textContent ?? "", /Open the conversation/);
   assert.match(items[0]?.querySelector(".home-item-time")?.textContent ?? "", /m ago/);
   assert.equal(items[1]?.querySelector(".badge")?.className, "badge warn");
-  assert.equal(items[1]?.querySelector(".btn")?.textContent, "Re-authorise");
+  assert.match(items[1]?.querySelector(".home-item-action")?.textContent ?? "", /Re-authorise/);
+  (items[1] as HTMLElement).click();
+  assert.equal(opened, "keychain", "the whole row is the target, not just a button");
   assert.match(text(), /Needs you 2/);
 });
 

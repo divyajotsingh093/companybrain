@@ -1,5 +1,5 @@
 import { html, nothing, type TemplateResult } from "lit";
-import { AlertTriangle, Check, House, Inbox, KeyRound, ShieldCheck, Sparkles } from "lucide";
+import { AlertTriangle, ArrowRight, Check, House, Inbox, KeyRound, ShieldCheck, Sparkles } from "lucide";
 import { chip, emptyState, icon, relTime } from "./ui.ts";
 
 export interface HomeItem {
@@ -24,6 +24,7 @@ export interface HomeSummary {
   needs: HomeItem[];
   setup: HomeStep[];
   asked: boolean;
+  counts?: Record<string, number>;
 }
 
 export interface HomeTplOpts {
@@ -59,16 +60,16 @@ export function greeting(user: string, now = new Date()): string {
 
 function itemTpl(item: HomeItem, onOpen: (view: string) => void): TemplateResult {
   const kind = ITEM_LABEL[item.type];
-  return html`<article class="home-item">
-    <div class="home-item-main">
-      <div class="home-item-head">
-        ${chip(kind.label, kind.tone)}<h3>${item.title}</h3>
+  return html`<button class="home-item" type="button" @click=${() => onOpen(item.view)}>
+    <span class="home-item-main">
+      <span class="home-item-head">
+        ${chip(kind.label, kind.tone)}<span class="home-item-title">${item.title}</span>
         ${item.at ? html`<span class="home-item-time">${relTime(item.at)}</span>` : nothing}
-      </div>
-      <p>${item.detail}</p>
-    </div>
-    <button class="btn" type="button" @click=${() => onOpen(item.view)}>${ITEM_ACTION[item.type]}</button>
-  </article>`;
+      </span>
+      <span class="home-item-detail">${item.detail}</span>
+    </span>
+    <span class="home-item-action">${ITEM_ACTION[item.type]}${icon(ArrowRight, 15)}</span>
+  </button>`;
 }
 
 function checklistTpl(steps: HomeStep[], onOpen: (view: string) => void): TemplateResult | typeof nothing {

@@ -20,6 +20,7 @@ export const appState = {
   me: null as Me | null,
   currentView: "home" as View,
   viewRenderSeq: 0,
+  viewCounts: {} as Partial<Record<View, number>>,
   topEl: null as HTMLElement | null,
   listEl: null as HTMLElement | null,
   mainEl: null as HTMLElement | null,
