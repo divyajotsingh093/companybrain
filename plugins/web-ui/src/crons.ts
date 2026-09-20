@@ -216,7 +216,7 @@ function drawCronsPage(): void {
   else if (cronsScope) empty = "No crons in this context.";
   render(
     listPageTpl({
-      title: "Crons",
+      title: "Automations",
       scope: cronsScope,
       onScope: (s) => {
         cronsScope = s;

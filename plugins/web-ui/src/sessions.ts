@@ -476,7 +476,7 @@ export function drawChatsPage(): void {
   }
   render(
     listPageTpl({
-      title: "Chats",
+      title: "Ask",
       scope: chatsPageScope,
       onScope: (s) => {
         chatsPageScope = s;

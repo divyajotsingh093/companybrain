@@ -1,4 +1,4 @@
-import { html, type TemplateResult } from "lit";
+import { html, nothing, type TemplateResult } from "lit";
 import { createElement, type IconNode } from "lucide";
 
 export function brandName(): string {
@@ -8,6 +8,28 @@ export function brandName(): string {
 
 export function brandMark(): TemplateResult {
   return html`<span class="brand-mark" aria-hidden="true"></span>`;
+}
+
+export type Tone = "neutral" | "ok" | "warn" | "danger" | "info" | "accent";
+
+export function chip(label: string, tone: Tone = "neutral"): TemplateResult {
+  return html`<span class="badge ${tone === "neutral" ? "" : tone}">${label}</span>`;
+}
+
+export interface EmptyStateOpts {
+  glyph: IconNode;
+  headline: string;
+  body: string;
+  action?: { label: string; onClick: () => void };
+}
+
+export function emptyState(o: EmptyStateOpts): TemplateResult {
+  return html`<div class="empty-state">
+    <span class="empty-icon">${icon(o.glyph, 20)}</span>
+    <h2>${o.headline}</h2>
+    <p>${o.body}</p>
+    ${o.action ? html`<button class="btn primary" type="button" @click=${o.action.onClick}>${o.action.label}</button>` : nothing}
+  </div>`;
 }
 
 export function icon(node: IconNode, size = 18): SVGElement {

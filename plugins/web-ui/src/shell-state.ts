@@ -9,7 +9,7 @@ export interface Me {
   permissions?: string[];
 }
 
-const VIEWS = ["chats", "contexts", "crons", "files", "keychain", "deploys", "memory", "skills"] as const;
+const VIEWS = ["home", "chats", "contexts", "crons", "files", "keychain", "deploys", "memory", "skills"] as const;
 export type View = (typeof VIEWS)[number];
 
 export function isView(view: string | null | undefined): view is View {
@@ -18,7 +18,7 @@ export function isView(view: string | null | undefined): view is View {
 
 export const appState = {
   me: null as Me | null,
-  currentView: "chats" as View,
+  currentView: "home" as View,
   viewRenderSeq: 0,
   topEl: null as HTMLElement | null,
   listEl: null as HTMLElement | null,

@@ -7,6 +7,7 @@ import {
   Clock,
   Files,
   Folder,
+  House,
   KeyRound,
   LogOut,
   MessageSquare,
@@ -67,6 +68,7 @@ import { renderCronsPage, resetActiveCron } from "./crons";
 import { renderFiles } from "./files";
 import { clearConnectorNotice, noteConnectorResult, renderConnectors, resetKeychainState } from "./connectors";
 import { renderDeploys } from "./deploys";
+import { renderHome } from "./home";
 import { renderMemory, resetMemoryState } from "./memory";
 import { renderSkills } from "./skills";
 import { contextsState, ensureContexts, renderContexts, resetContextsState } from "./contexts";
@@ -155,7 +157,7 @@ function resetSidebarWidth(): void {
   localStorage.removeItem(SIDEBAR_W_KEY);
 }
 
-const NAV_WORKSPACE_KEY = "web-ui:nav-workspace";
+const NAV_GROUP_KEY = "web-ui:nav-group:";
 
 function loadNavOpen(key: string): boolean {
   try {
@@ -173,16 +175,26 @@ function saveNavOpen(key: string, open: boolean): void {
   }
 }
 
-let navWorkspaceOpen = loadNavOpen(NAV_WORKSPACE_KEY);
+const navGroupState = new Map<string, boolean>();
 
-function toggleNavWorkspace(): void {
-  navWorkspaceOpen = !navWorkspaceOpen;
-  saveNavOpen(NAV_WORKSPACE_KEY, navWorkspaceOpen);
+function navGroupOpen(group: string): boolean {
+  const known = navGroupState.get(group);
+  if (known !== undefined) return known;
+  const open = loadNavOpen(NAV_GROUP_KEY + group);
+  navGroupState.set(group, open);
+  return open;
+}
+
+function toggleNavGroup(group: string): void {
+  const open = !navGroupOpen(group);
+  navGroupState.set(group, open);
+  saveNavOpen(NAV_GROUP_KEY + group, open);
   renderSidebarTop();
 }
 
 const ICON = {
   newChat: Plus,
+  home: House,
   chats: MessageSquare,
   contexts: Folder,
   files: Files,
@@ -192,6 +204,20 @@ const ICON = {
   memory: Brain,
   skills: Box,
 };
+
+export const NAV: ReadonlyArray<{ view: View; glyph: IconNode; label: string; group: string }> = [
+  { view: "home", glyph: ICON.home, label: "Home", group: "" },
+  { view: "chats", glyph: ICON.chats, label: "Ask", group: "Work" },
+  { view: "contexts", glyph: ICON.contexts, label: "Projects", group: "Work" },
+  { view: "files", glyph: ICON.files, label: "Files", group: "Work" },
+  { view: "skills", glyph: ICON.skills, label: "Skills", group: "Build" },
+  { view: "crons", glyph: ICON.crons, label: "Automations", group: "Build" },
+  { view: "deploys", glyph: ICON.deploys, label: "Apps", group: "Build" },
+  { view: "keychain", glyph: ICON.keychain, label: "Keychain", group: "Settings" },
+  { view: "memory", glyph: ICON.memory, label: "Memory", group: "Settings" },
+];
+
+export const NAV_GROUPS: readonly string[] = [...new Set(NAV.map((row) => row.group).filter(Boolean))];
 
 export async function signOut(): Promise<void> {
   const portal = authMode === "portal";
@@ -538,17 +564,15 @@ export function renderSidebarTop(): void {
         ${icon(ICON.newChat, 17)}<span>${splitState.active ? "New session" : "New chat"}</span>
       </button>
       <nav class="nav" @click=${onNavClick}>
-        ${navGroup(
-          "nav-workspace",
-          "Browse",
-          navWorkspaceOpen,
-          toggleNavWorkspace,
-          html`
-            ${navRow("contexts", ICON.contexts, "Projects")} ${navRow("chats", ICON.chats, "Chats")}
-            ${navRow("files", ICON.files, "Files")} ${navRow("crons", ICON.crons, "Crons")}
-            ${navRow("keychain", ICON.keychain, "Keychain")} ${navRow("deploys", ICON.deploys, "Apps")}
-            ${navRow("memory", ICON.memory, "Memory")} ${navRow("skills", ICON.skills, "Skills")}
-          `,
+        ${NAV.filter((row) => !row.group).map((row) => navRow(row.view, row.glyph, row.label))}
+        ${NAV_GROUPS.map((group) =>
+          navGroup(
+            `nav-${group.toLowerCase()}`,
+            group,
+            navGroupOpen(group),
+            () => toggleNavGroup(group),
+            html`${NAV.filter((row) => row.group === group).map((row) => navRow(row.view, row.glyph, row.label))}`,
+          ),
         )}
       </nav>
       ${
@@ -630,6 +654,9 @@ export function switchView(v: View): void {
     case "skills":
       void renderSkills();
       break;
+    case "home":
+      renderHome();
+      break;
   }
 }
 
@@ -660,6 +687,9 @@ function refreshActiveView(v: View): void {
       break;
     case "skills":
       void renderSkills();
+      break;
+    case "home":
+      renderHome();
       break;
   }
 }
@@ -903,6 +933,6 @@ export async function boot(): Promise<void> {
     exitSplitIfActive();
     await openSession(recent);
   } else if (!mountRestoredCanvas()) {
-    newChat();
+    switchView("home");
   }
 }
