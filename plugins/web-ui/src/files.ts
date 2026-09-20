@@ -1,8 +1,8 @@
 import { html, nothing, render } from "lit";
-import { File, Image, Upload } from "lucide";
+import { File, Files, Image, Upload } from "lucide";
 import { api, reportSigninRequired, type SigninRequired, withBase } from "./core-bridge";
 import { errMessage } from "../../chassis/src/errors";
-import { browserRenderableImage, formatBytes, icon, relTime } from "./ui";
+import { browserRenderableImage, emptyState, formatBytes, icon, relTime } from "./ui";
 import { contextsState, ensureContexts, personalScopeId, scopeChip, scopeFilterControl } from "./contexts";
 import { appState } from "./shell";
 import { fileListNeedsAllPages } from "./file-list";
@@ -180,7 +180,17 @@ function drawFiles(loading = false): void {
           },
         )}
       </div>
-      ${visible.length ? html`<div class="list-rows file-list">${visible.map(fileRow)}</div>` : html`<div class="empty compact">${filtered ? "No files match these filters." : "No files yet. Upload one here or ask the agent to create one."}</div>`}
+      ${
+        visible.length
+          ? html`<div class="list-rows file-list">${visible.map(fileRow)}</div>`
+          : filtered
+            ? html`<div class="empty compact">No files match these filters.</div>`
+            : emptyState({
+                glyph: Files,
+                headline: "No files yet",
+                body: "Upload one here, or ask the agent to make one for you. Files you own stay yours until you share them.",
+              })
+      }
       ${filesNextCursor ? html`<div class="list-footer"><button class="btn" type="button" ?disabled=${filesLoadingMore} @click=${() => void loadMoreFiles()}>${filesLoadingMore ? "Loading…" : "Load more"}</button></div>` : nothing}
     `,
     filesHost,

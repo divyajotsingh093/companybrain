@@ -2,7 +2,8 @@ import { html, render, type TemplateResult } from "lit";
 import { Activity, KeyRound, Link, LockKeyhole, Plug, Plus, RefreshCw, ShieldCheck } from "lucide";
 import { api } from "./core-bridge";
 import { errMessage } from "../../chassis/src/errors";
-import { icon } from "./ui";
+import { connectorState } from "./connector-state.ts";
+import { chip, icon } from "./ui";
 import { appState, replacePanePreservingFocus } from "./shell";
 import { focusDialogCancel, restoreDialogFocus, trapDialogFocus } from "./dialog-focus";
 import { isActiveGrant, isExpiredCredential, KeychainOperations, keychainSummary } from "./keychain-state";
@@ -179,7 +180,7 @@ function credentialCard(c: KeychainCredential): TemplateResult {
         <div class="kc-resource-copy">
           <div class="kc-resource-title-row">
             <h3>${c.service}</h3>
-            ${expired ? html`<span class="kc-state warning">Expired</span>` : ""}
+            ${expired ? chip("Expired", "warn") : ""}
           </div>
           ${subtitle ? html`<div class="kc-resource-meta">${subtitle}</div>` : ""}
           <div class="kc-credential-facts">
@@ -425,9 +426,8 @@ function drawConnectors(loading = false): void {
       credentials.map((credential) => [credential.credentialId, { id: credential.credentialId, kind: "connector" }]),
     );
     const grants = keychainGrants.filter((grant) => isActiveGrant(grant, credentialsById.get(grant.credentialId)));
-    let connectionState: TemplateResult | string = html`<span class="kc-state neutral">Not connected</span>`;
-    if (needsReconnect) connectionState = html`<span class="kc-state warning">Reconnect needed</span>`;
-    else if (connected) connectionState = "";
+    const state = connectorState(p);
+    const connectionState = state.tone === "ok" ? "" : chip(state.label, state.tone);
     return html`
       <article class="kc-resource kc-account">
         <div class="kc-resource-main">
@@ -441,7 +441,11 @@ function drawConnectors(loading = false): void {
           </div>
         </div>
         ${meta.desc ? html`<p class="kc-resource-description">${meta.desc}</p>` : ""}
-        ${needsReconnect && p.refreshError ? html`<div class="kc-inline-warning" role="status">Refresh failed: ${p.refreshError}</div>` : ""}
+        ${
+          needsReconnect
+            ? html`<div class="kc-inline-warning" role="status">${p.refreshError ? `${p.refreshError} ` : ""}${state.detail}</div>`
+            : ""
+        }
         ${
           grants.length
             ? html`<div class="kc-access-block">
@@ -468,7 +472,13 @@ function drawConnectors(loading = false): void {
             : ""
         }
         <div class="kc-resource-actions">
-          ${available ? html`<button class="btn" type="button" @click=${() => void startConnector(id)}>${connected || needsReconnect ? "Reconnect" : "Connect account"}</button>` : ""}
+          ${
+            available && state.action
+              ? html`<button class="btn" type="button" @click=${() => void startConnector(id)}>
+                  ${state.action}
+                </button>`
+              : ""
+          }
           ${connected || needsReconnect ? html`<button class="kc-text-action danger" type="button" data-confirm-key=${`disconnect:${id}`} ?disabled=${keychainOperations.mutationInFlight} @click=${() => void revokeConnector(id)}>Disconnect</button>` : ""}
         </div>
       </article>

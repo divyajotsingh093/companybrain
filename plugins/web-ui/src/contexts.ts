@@ -29,7 +29,7 @@ import {
 } from "./core-bridge";
 import { UI_BASE } from "./deep-link";
 import { errMessage } from "../../chassis/src/errors";
-import { actionSnippet, closeFormMenus, formatBytes, icon, initials, relTime, toggleFormMenu } from "./ui";
+import { actionSnippet, closeFormMenus, emptyState, formatBytes, icon, initials, relTime, toggleFormMenu } from "./ui";
 import { appState, renderSidebarTop, replacePanePreservingFocus, switchView, syncUrlFromState } from "./shell";
 import { newChat } from "./chat";
 import { groupDmTitle, openSession, refreshSessions, sessionsState, slackLogo, surfaceOf } from "./sessions";
@@ -320,9 +320,14 @@ function gridTpl(): TemplateResult {
   let projectList: TemplateResult | typeof nothing = nothing;
   if (projects.length) projectList = html`<div class="grid project-grid">${projects.map(contextCard)}</div>`;
   else if (!contextsLoading) {
-    projectList = html`<div class="empty compact project-empty">
-      ${projectsFiltered ? "No projects match your search." : "No projects yet."}
-    </div>`;
+    projectList = projectsFiltered
+      ? html`<div class="empty compact project-empty">No projects match your search.</div>`
+      : emptyState({
+          glyph: Folder,
+          headline: "No projects yet",
+          body: "A project keeps one piece of work — its chats, files and automations — together for the people in it.",
+          action: { label: "New project", onClick: () => openCreateProject() },
+        });
   }
   return html`
     <div class="project-grid-content">

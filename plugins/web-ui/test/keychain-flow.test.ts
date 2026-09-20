@@ -151,12 +151,13 @@ test("destructive controls settle duplicate attempts while a mutation is busy", 
 test("keychain rows reserve success badges for actionable states", () => {
   assert.doesNotMatch(connectorsSource, /Stored securely/);
   assert.doesNotMatch(connectorsSource, />Connected<\/span>/);
-  assert.match(connectorsSource, /expired \? html`<span class="kc-state warning">Expired<\/span>` : ""/);
-  assert.match(connectorsSource, /<span class="kc-state warning">Reconnect needed<\/span>/);
+  assert.match(connectorsSource, /expired \? chip\("Expired", "warn"\) : ""/);
+  assert.match(connectorsSource, /state\.tone === "ok" \? "" : chip\(state\.label, state\.tone\)/);
 });
 
 test("keychain actions keep secondary weight and compact mobile sizing", () => {
-  assert.match(connectorsSource, /\$\{available \? html`<button class="btn" type="button"/);
+  assert.match(connectorsSource, /available && state\.action/);
+  assert.doesNotMatch(connectorsSource, /class="btn primary" type="button" @click=\$\{\(\) => void startConnector/);
   assert.doesNotMatch(shellCssSource, /\.kc-hero-actions \.btn\s*\{\s*flex:\s*1;/);
   assert.doesNotMatch(shellCssSource, /sidebar-closed \.kc-hero-copy/);
 });

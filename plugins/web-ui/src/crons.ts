@@ -1,8 +1,8 @@
 import { html, nothing, render, type TemplateResult } from "lit";
-import { Archive, Pause, Pencil, Play, Plus, RotateCcw, Trash2 } from "lucide";
+import { Archive, Clock, Pause, Pencil, Play, Plus, RotateCcw, Trash2 } from "lucide";
 import { api } from "./core-bridge";
 import { errMessage } from "../../chassis/src/errors";
-import { icon } from "./ui";
+import { emptyState, icon } from "./ui";
 import { listBackLink, listPageTpl } from "./list-page";
 import { ensureContexts, scopeChip } from "./contexts";
 import { appState } from "./shell";
@@ -210,10 +210,15 @@ function drawCronsPage(): void {
     rows.push(...archived.map(({ c, mine }) => cronPageRow(c, mine)));
     if (!archived.length) rows.push(cronEmptyRow("Nothing archived."));
   }
-  let empty = "No crons yet.";
+  let empty: string | TemplateResult = emptyState({
+    glyph: Clock,
+    headline: "No automations yet",
+    body: "An automation runs a skill on a schedule — a Monday pipeline digest, a nightly CRM tidy-up.",
+    action: { label: "New automation", onClick: () => showNewCron() },
+  });
   if (cronsNotice) empty = cronsNotice;
   else if (cronsLoading && cronList.length === 0 && visibleCronList.length === 0) empty = "Loading crons…";
-  else if (cronsScope) empty = "No crons in this context.";
+  else if (cronsScope) empty = "No automations in this context.";
   render(
     listPageTpl({
       title: "Automations",
