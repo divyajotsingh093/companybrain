@@ -69,8 +69,8 @@ danger | info | accent), `empty-state.ts` (icon, headline, one sentence, one act
    Server aggregate: `GET /api/home` fans out to the routes that already exist (sessions and their
    approvals for the 20 most recent, crons, keychain overview) and returns one typed list; the
    fan-out is bounded and cached for 10 seconds per principal.
-2. **Setup checklist** (admins, until complete): model provider, Slack, first source connected,
-   first teammate invited. Each step links to where it is done and reports its own state from the
+2. **Setup checklist**, until complete: model provider, first source connected, first skill
+   published. Each step links to where it is done and reports its own state from the
    same aggregate. It disappears when every step is done.
 3. **Recent activity**: the last runs and board events, each with time, actor and outcome.
 
@@ -79,9 +79,9 @@ carried by screens:
 
 - *Member first run*: a welcome panel on Home — what the brain can see for you, connect your
   accounts, three suggested first questions. It clears once the member has asked anything.
-- *Invites*: `POST /api/invites` (admin only) creates a signed, expiring invite link, listed and
-  revocable. Accepting one signs the member in and lands them on Home. Invited addresses join the
-  allowed-principals list; no invite widens anyone's grants, and nothing is granted by accepting.
+- *Invites*: **deferred to stage 5.** A durable invite needs a core-side store and API, which does
+  not exist yet, and the admin screens it belongs beside are stage 5 anyway. Until then access is
+  still granted by the allowed-principals list.
 
 **Empty and error states.** Every list screen gets an empty state with one action, and every
 failure says what broke and what to do, from a fixed message list.

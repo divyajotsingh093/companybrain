@@ -1,45 +1,42 @@
-import { html, render, type TemplateResult } from "lit";
-import { House, Inbox } from "lucide";
-import { replacePanePreservingFocus } from "./shell";
-import { appState } from "./shell-state";
-import { emptyState, icon } from "./ui";
+import { render } from "lit";
+import { api } from "./core-bridge";
+import { errMessage } from "../../chassis/src/errors";
+import { homeTpl, type HomeSummary } from "./home-view.ts";
+import { replacePanePreservingFocus, switchView } from "./shell";
+import { appState, isView, type View } from "./shell-state";
 
-export function homeHeaderTpl(user: string): TemplateResult {
-  const hour = new Date().getHours();
-  const part = hour < 12 ? "morning" : hour < 18 ? "afternoon" : "evening";
-  const name = (user.split("@")[0] ?? user).split(/[.\-_]/)[0] ?? user;
-  return html`
-    <div class="home-head">
-      <span class="home-eyebrow">${icon(House, 15)}<span>Home</span></span>
-      <h1 class="home-title">Good ${part}, ${name}</h1>
-    </div>
-  `;
+let summary: HomeSummary | null = null;
+let loadError = "";
+let loading = false;
+
+export function resetHomeState(): void {
+  summary = null;
+  loadError = "";
+  loading = false;
 }
 
-export function homeTpl(opts: { user: string; needs: TemplateResult[] }): TemplateResult {
-  return html`
-    <div class="home">
-      ${homeHeaderTpl(opts.user)}
-      <section class="home-section" aria-label="Needs you">
-        <h2 class="home-section-title">Needs you</h2>
-        ${
-          opts.needs.length
-            ? html`<div class="home-needs">${opts.needs}</div>`
-            : emptyState({
-                glyph: Inbox,
-                headline: "Nothing needs you",
-                body: "Approvals, broken connections and failing automations show up here.",
-              })
-        }
-      </section>
-    </div>
-  `;
+function open(view: string): void {
+  if (isView(view)) switchView(view as View);
 }
 
-export function renderHome(): void {
-  if (!appState.mainEl) return;
+function draw(): void {
+  if (!appState.mainEl || appState.currentView !== "home") return;
   const host = document.createElement("div");
   host.className = "pane home-pane";
-  render(homeTpl({ user: appState.me?.user ?? "", needs: [] }), host);
+  render(homeTpl({ user: appState.me?.user ?? "", data: summary, error: loadError, loading, onOpen: open }), host);
   replacePanePreservingFocus(host);
+}
+
+export async function renderHome(): Promise<void> {
+  loading = true;
+  loadError = "";
+  draw();
+  try {
+    summary = await api<HomeSummary>("/api/home");
+  } catch (err) {
+    loadError = errMessage(err, "Home could not load what needs you. Try again shortly.");
+  } finally {
+    loading = false;
+  }
+  draw();
 }

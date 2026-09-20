@@ -532,6 +532,123 @@ interface CoreApprovalRecord {
   } & Record<string, unknown>;
 }
 
+interface HomeItem {
+  id: string;
+  type: "approval_pending" | "connector_broken";
+  title: string;
+  detail: string;
+  view: string;
+  href?: string;
+  at?: number;
+}
+
+interface HomeStep {
+  id: string;
+  label: string;
+  detail: string;
+  done: boolean;
+  view?: string;
+}
+
+const HOME_SESSION_FANOUT = 20;
+
+async function coreJson<T>(method: "GET", path: string): Promise<T | null> {
+  const r = await coreFetch(method, path);
+  if (r.status < 200 || r.status >= 300) return null;
+  try {
+    return JSON.parse(r.text) as T;
+  } catch {
+    return null;
+  }
+}
+
+async function approvalItems(user: string): Promise<HomeItem[]> {
+  const sessions = await coreJson<{ sessions?: Array<{ id: string; title?: string; updatedAt?: number }> }>(
+    "GET",
+    `/v1/sessions?principalId=${encodeURIComponent(user)}`,
+  );
+  const recent = (sessions?.sessions ?? []).slice(0, HOME_SESSION_FANOUT);
+  const perSession = await Promise.all(
+    recent.map(async (session) => {
+      const pending = await coreJson<{ approvals?: Array<{ requestId: string; command: string; reason?: string; summary?: string }> }>(
+        "GET",
+        `/v1/sessions/${encodeURIComponent(session.id)}/approvals?viewer=${encodeURIComponent(user)}`,
+      );
+      return (pending?.approvals ?? []).map((approval) => ({
+        id: `approval:${approval.requestId}`,
+        type: "approval_pending" as const,
+        title: approval.summary || approval.command,
+        detail: `Waiting on you in ${session.title || "a conversation"}`,
+        view: "chats",
+        href: `/chats/${encodeURIComponent(session.id)}`,
+        ...(session.updatedAt ? { at: session.updatedAt } : {}),
+      }));
+    }),
+  );
+  return perSession.flat();
+}
+
+async function connectorItems(user: string): Promise<HomeItem[]> {
+  const connectors = await coreJson<{ providers?: Record<string, { needsReconnect?: boolean; refreshError?: string }> }>(
+    "GET",
+    `/v1/connectors/oauth/status?principalId=${encodeURIComponent(user)}`,
+  );
+  return Object.entries(connectors?.providers ?? {})
+    .filter(([, provider]) => provider.needsReconnect)
+    .map(([id, provider]) => ({
+      id: `connector:${id}`,
+      type: "connector_broken" as const,
+      title: `${id} needs re-authorising`,
+      detail: provider.refreshError || "Its access expired, so anything that uses it is paused. Re-authorise to resume; the connection keeps its grants.",
+      view: "keychain",
+    }));
+}
+
+async function setupSteps(user: string): Promise<HomeStep[]> {
+  const runtime = await coreJson<{ approvedHarnesses?: string[]; modelsByHarness?: Record<string, unknown[]> }>(
+    "GET",
+    `/v1/runtime-config?principalId=${encodeURIComponent(user)}&scopeId=${encodeURIComponent(`personal:${user}`)}`,
+  );
+  const models = Object.values(runtime?.modelsByHarness ?? {}).some((list) => Array.isArray(list) && list.length > 0);
+  const connectors = await coreJson<{ providers?: Record<string, { connected?: boolean }> }>(
+    "GET",
+    `/v1/connectors/oauth/status?principalId=${encodeURIComponent(user)}`,
+  );
+  const connected = Object.values(connectors?.providers ?? {}).some((provider) => provider.connected);
+  const skills = await coreJson<{ skills?: unknown[] }>("GET", `/v1/skills?principalId=${encodeURIComponent(user)}`);
+  return [
+    { id: "model", label: "Choose a model provider", detail: "The agent needs a model before it can answer anything.", done: models },
+    {
+      id: "connector",
+      label: "Connect your first source",
+      detail: "Mail, calendar, files or a CRM. The agent only ever reads what you can read.",
+      done: connected,
+      view: "keychain",
+    },
+    {
+      id: "skill",
+      label: "Publish a skill",
+      detail: "Skills are how work gets done the same way twice.",
+      done: (skills?.skills ?? []).length > 0,
+      view: "skills",
+    },
+  ];
+}
+
+async function homeSummary(user: string): Promise<{ needs: HomeItem[]; setup: HomeStep[]; asked: boolean }> {
+  const [approvals, connectors, setup, sessions] = await Promise.all([
+    approvalItems(user),
+    connectorItems(user),
+    setupSteps(user),
+    coreJson<{ sessions?: unknown[] }>("GET", `/v1/sessions?principalId=${encodeURIComponent(user)}`),
+  ]);
+  return {
+    needs: [...approvals, ...connectors],
+    setup,
+    asked: (sessions?.sessions ?? []).length > 0,
+  };
+}
+
 function uploadFileName(url: URL): string {
   return url.searchParams.get("name")?.trim() || "file";
 }
@@ -793,6 +910,10 @@ const routeRequest = async (req: IncomingMessage, res: ServerResponse) => {
         declaredSha(url),
         uploadFileName(url),
       );
+    }
+
+    if (method === "GET" && path === "/api/home") {
+      return relay(res, { status: 200, text: JSON.stringify(await homeSummary(user)) });
     }
 
     if (method === "GET" && path === "/api/sessions") {

@@ -68,7 +68,7 @@ import { renderCronsPage, resetActiveCron } from "./crons";
 import { renderFiles } from "./files";
 import { clearConnectorNotice, noteConnectorResult, renderConnectors, resetKeychainState } from "./connectors";
 import { renderDeploys } from "./deploys";
-import { renderHome } from "./home";
+import { renderHome, resetHomeState } from "./home";
 import { renderMemory, resetMemoryState } from "./memory";
 import { renderSkills } from "./skills";
 import { contextsState, ensureContexts, renderContexts, resetContextsState } from "./contexts";
@@ -235,6 +235,7 @@ export async function signOut(): Promise<void> {
   appState.currentView = "chats";
   composerState.skillsCache = null;
   resetMemoryState();
+  resetHomeState();
   resetContextsState();
   resetKeychainState();
   resetComposer();
@@ -655,7 +656,7 @@ export function switchView(v: View): void {
       void renderSkills();
       break;
     case "home":
-      renderHome();
+      void renderHome();
       break;
   }
 }
@@ -689,7 +690,7 @@ function refreshActiveView(v: View): void {
       void renderSkills();
       break;
     case "home":
-      renderHome();
+      void renderHome();
       break;
   }
 }

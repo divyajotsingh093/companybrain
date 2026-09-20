@@ -78,7 +78,7 @@ test("home is the landing view and renders through the nav's own dispatch", () =
   const state = readFileSync(new URL("../src/shell-state.ts", import.meta.url), "utf8");
   assert.match(state, /const VIEWS = \["home",/);
   assert.match(state, /currentView: "home" as View/);
-  assert.match(shell, /case "home":\s*\n\s*renderHome\(\);/);
+  assert.match(shell, /case "home":\s*\n\s*void renderHome\(\);/);
 });
 
 test("chip and empty state render their tones and actions", async () => {
