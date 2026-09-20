@@ -1,0 +1,6 @@
+qm web UI
+
+src/fluid-orb.ts adapts the WebGL shader and setup from Rare UI's fluid-orb
+component (https://rareui.com, https://github.com/swamimalode07/rare-ui).
+Copyright (c) 2026 Swami Malode. MIT License.
+Ported from React to a framework-free custom element.

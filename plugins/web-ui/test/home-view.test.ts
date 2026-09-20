@@ -31,10 +31,15 @@ let opened = "";
 let asked = "";
 let typed = "";
 
-const draw = (data: HomeSummary | null, over: { draft?: string; error?: string; loading?: boolean } = {}): void => {
+const draw = (
+  data: HomeSummary | null,
+  over: { draft?: string; error?: string; loading?: boolean; stats?: Array<{ label: string; value: number }> } = {},
+): void => {
   render(
     homeTpl({
       user: "ada@acme.com",
+      accent: "#f97316",
+      stats: over.stats ?? [],
       data,
       error: over.error ?? "",
       loading: over.loading ?? false,

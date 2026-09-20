@@ -37,6 +37,8 @@ export interface HomeFeature {
 
 export interface HomeTplOpts {
   user: string;
+  accent: string;
+  stats: Array<{ label: string; value: number }>;
   data: HomeSummary | null;
   error: string;
   loading: boolean;
@@ -110,6 +112,7 @@ function askTpl(o: HomeTplOpts): TemplateResult {
   };
   return html`
     <section class="home-hero" aria-label="Ask">
+      <fluid-orb class="home-orb" size="104" color=${o.accent}></fluid-orb>
       <h1 class="home-ask-title">What do you want to do?</h1>
       <p class="home-ask-lede">
         Ask in your own words. The agent works from your own accounts, asks before it acts, and shows where each answer came
@@ -145,6 +148,13 @@ function askTpl(o: HomeTplOpts): TemplateResult {
           (s) => html`<li><button class="home-suggestion" type="button" @click=${() => o.onAsk(s)}>${s}</button></li>`,
         )}
       </ul>
+      ${
+        o.stats.length
+          ? html`<ul class="home-stats">
+              ${o.stats.map((s) => html`<li><b>${s.value}</b><span>${s.label}</span></li>`)}
+            </ul>`
+          : nothing
+      }
     </section>
   `;
 }

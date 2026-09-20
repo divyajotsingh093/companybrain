@@ -3,6 +3,7 @@ import { newChat } from "./chat";
 import { api } from "./core-bridge";
 import { errMessage } from "../../chassis/src/errors";
 import { newChatDraftKey, saveDraft } from "./drafts";
+import { defineFluidOrb } from "./fluid-orb.ts";
 import { homeTpl, type HomeFeature, type HomeSummary } from "./home-view.ts";
 import { NAV, renderSidebarTop, replacePanePreservingFocus, switchView } from "./shell";
 import { appState, isView, type View } from "./shell-state";
@@ -56,13 +57,36 @@ function features(): HomeFeature[] {
   });
 }
 
+const STAT_LABELS: Array<[string, string]> = [
+  ["skills", "skills"],
+  ["crons", "automations"],
+  ["contexts", "projects"],
+  ["deploys", "apps"],
+];
+
+function stats(): Array<{ label: string; value: number }> {
+  const counts = summary?.counts ?? {};
+  return STAT_LABELS.flatMap(([key, label]) => {
+    const value = counts[key] ?? 0;
+    return value ? [{ label, value }] : [];
+  });
+}
+
+function accent(): string {
+  const value = getComputedStyle(document.documentElement).getPropertyValue("--brand-accent").trim();
+  return /^#[0-9a-f]{3,6}$/i.test(value) ? value : "#f97316";
+}
+
 function draw(): void {
+  defineFluidOrb();
   if (!appState.mainEl || appState.currentView !== "home") return;
   const host = document.createElement("div");
   host.className = "pane home-pane";
   render(
     homeTpl({
       user: appState.me?.user ?? "",
+      accent: accent(),
+      stats: stats(),
       data: summary,
       error: loadError,
       loading,
