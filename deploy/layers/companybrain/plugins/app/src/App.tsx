@@ -6,6 +6,7 @@ import { GraphScreen } from "./graph";
 import { FilesSection, UPLOADS } from "./files";
 import { GatewayScreen } from "./gateway";
 import { Shell } from "./shell";
+import { HomeScreen, type Destination } from "./home";
 import { MemoryScreen, type MemoryEntry } from "./memory";
 import { SkillsScreen, type SkillEntry } from "./skills";
 import { WorkScreen, pendingReviews, type Work } from "./work";
@@ -108,7 +109,7 @@ interface Indexed {
   message?: string;
 }
 
-type Screen = "ask" | "graph" | "overview" | "work" | "sources" | "agents" | "gateway" | "decisions" | EntryKind;
+type Screen = "home" | "ask" | "graph" | "overview" | "work" | "sources" | "agents" | "gateway" | "decisions" | EntryKind;
 
 const KIND_LABEL: Record<EntryKind, string> = {
   project: "Projects",
@@ -165,6 +166,7 @@ function connections(body: string): string[] {
 
 
 const SCREEN_LABEL: Record<Screen, string> = {
+  home: "Home",
   ask: "Ask",
   graph: "Graph",
   overview: "Overview",
@@ -177,7 +179,7 @@ const SCREEN_LABEL: Record<Screen, string> = {
 };
 
 const NAV_GROUPS: Array<{ group: string | null; items: Screen[] }> = [
-  { group: null, items: ["ask", "graph", "overview"] },
+  { group: null, items: ["home", "ask", "graph", "overview"] },
   { group: "Work", items: ["work", "project", "sources"] },
   { group: "Knowledge", items: ["memory", "record", "lesson"] },
   { group: "Operating", items: ["process", "rule", "role"] },
@@ -817,7 +819,7 @@ export function App(): JSX.Element {
   const [me, setMe] = useState<Me | null>(null);
   const [board, setBoard] = useState<BoardView | null>(null);
   const [loading, setLoading] = useState(true);
-  const [screen, setScreen] = useState<Screen>("ask");
+  const [screen, setScreen] = useState<Screen>("home");
   const [sources, setSources] = useState<Sources | null>(null);
   const [sourcesError, setSourcesError] = useState<string | null>(null);
   const [brain, setBrain] = useState<Brain | null>(null);
@@ -829,6 +831,7 @@ export function App(): JSX.Element {
   const [failed, setFailed] = useState<string | null>(null);
   const [thread, setThread] = useState<Turn[]>([]);
   const [seed, setSeed] = useState<string | undefined>(undefined);
+  const [autoAsk, setAutoAsk] = useState(false);
 
   const loadDecisions = (): void => {
     void get<Decisions>("/api/app/decisions").then(
@@ -893,12 +896,21 @@ export function App(): JSX.Element {
   const select = (next: Screen): void => {
     setBoard(null);
     setSeed(undefined);
+    setAutoAsk(false);
     setFailed(null);
     setScreen(next);
     loadDecisions();
     loadWork();
-    if (next === "sources" || next === "ask") loadSources();
-    if (isEntryKind(next)) loadBrain();
+    if (next === "sources" || next === "ask" || next === "home") loadSources();
+    if (isEntryKind(next) || next === "home") loadBrain();
+  };
+
+  const go = (next: Destination, text?: string): void => {
+    select(next);
+    if (text) {
+      setSeed(text);
+      setAutoAsk(next === "ask");
+    }
   };
 
   const skeleton = (
@@ -926,8 +938,27 @@ export function App(): JSX.Element {
     }
     if (board) return <BoardScreen view={board} onBack={() => select("overview")} />;
     if (!me) return null;
+    if (screen === "home") {
+      const memories = (brain?.kinds.memory ?? []) as unknown as Array<{ memory?: { auto: boolean } }>;
+      const skills = (brain?.kinds.skill ?? []) as unknown as Array<{ skill?: Record<string, { learned: unknown[] }> }>;
+      return (
+        <HomeScreen
+          facts={{
+            login: me.login,
+            agents: me.tokens.length,
+            sources: sources?.sources.length ?? 0,
+            memories: memories.length,
+            learnedByAgents: memories.some((m) => m.memory && !m.memory.auto) || skills.some((s) => Object.values(s.skill ?? {}).some((p) => p.learned.length > 0)),
+            skills: skills.length,
+            reviews: pendingReviews(work),
+            decisions: decisions?.open.length ?? 0,
+          }}
+          onGo={go}
+        />
+      );
+    }
     if (screen === "ask") {
-      return <AskScreen thread={thread} setThread={setThread} canAsk={sources?.canAsk ?? true} seed={seed} onOpenGraph={() => select("graph")} onOpenDecisions={() => select("decisions")} />;
+      return <AskScreen thread={thread} setThread={setThread} canAsk={sources?.canAsk ?? true} seed={seed} autoAsk={autoAsk} onOpenGraph={() => select("graph")} onOpenDecisions={() => select("decisions")} />;
     }
     if (screen === "graph") {
       return (
@@ -952,7 +983,7 @@ export function App(): JSX.Element {
         );
       }
       if (!work) return skeleton;
-      return <WorkScreen view={work} login={me.login} repos={me.repos.map((r) => r.fullName)} onChanged={loadWork} />;
+      return <WorkScreen view={work} login={me.login} repos={me.repos.map((r) => r.fullName)} onChanged={loadWork} seed={seed} />;
     }
     if (screen === "sources") {
       if (sourcesError) {
@@ -984,7 +1015,7 @@ export function App(): JSX.Element {
       );
     }
     if (!brain) return skeleton;
-    if (screen === "memory") return <MemoryScreen entries={(brain.kinds.memory ?? []) as unknown as MemoryEntry[]} purposes={brain.memoryTypes} now={brain.now} onChanged={loadBrain} />;
+    if (screen === "memory") return <MemoryScreen entries={(brain.kinds.memory ?? []) as unknown as MemoryEntry[]} purposes={brain.memoryTypes} now={brain.now} onChanged={loadBrain} seed={seed} />;
     if (screen === "skill") return <SkillsScreen entries={(brain.kinds.skill ?? []) as unknown as SkillEntry[]} purposes={brain.skillParts} now={brain.now} onChanged={loadBrain} />;
     return <EntriesScreen key={screen} kind={screen} entries={brain.kinds[screen] ?? []} now={brain.now} limit={brain.limit} onChanged={loadBrain} />;
   };

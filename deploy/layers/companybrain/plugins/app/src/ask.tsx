@@ -28,6 +28,7 @@ export interface AskScreenProps {
   setThread: (next: Turn[]) => void;
   canAsk: boolean;
   seed?: string;
+  autoAsk?: boolean;
   onOpenGraph?: () => void;
   onOpenDecisions?: () => void;
 }
@@ -310,7 +311,7 @@ function Sources({ turn, index, active }: { turn: Turn; index: number; active: n
   );
 }
 
-export function AskScreen({ thread, setThread, canAsk, seed, onOpenGraph, onOpenDecisions }: AskScreenProps): JSX.Element {
+export function AskScreen({ thread, setThread, canAsk, seed, autoAsk, onOpenGraph, onOpenDecisions }: AskScreenProps): JSX.Element {
   const pal = usePal(THEME);
   injectAskStyles(pal);
   const reduced = useReducedMotion();
@@ -328,11 +329,19 @@ export function AskScreen({ thread, setThread, canAsk, seed, onOpenGraph, onOpen
   const [copied, setCopied] = useState<{ turn: number; ok: boolean } | null>(null);
   const [fresh, setFresh] = useState<number | null>(null);
 
+  const askedSeed = useRef<string | null>(null);
+
   useEffect(() => {
     if (!seed) return;
+    if (autoAsk && canAsk) {
+      if (askedSeed.current === seed) return;
+      askedSeed.current = seed;
+      void ask(seed, [], true);
+      return;
+    }
     setDraft(seed);
     inputRef.current?.focus();
-  }, [seed]);
+  }, [seed, autoAsk, canAsk]);
 
   useEffect(() => {
     if (active.source === null) return;

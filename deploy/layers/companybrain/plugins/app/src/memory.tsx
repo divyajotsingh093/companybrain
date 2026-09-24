@@ -24,11 +24,11 @@ export interface MemoryEntry {
 const TYPE_LABEL: Record<MemoryType, string> = { user: "User", feedback: "Feedback", project: "Projects", reference: "References", topic: "Topics", creative: "Creative" };
 const TYPE_COLOR: Record<MemoryType, string> = { user: "#8ff2c9", feedback: "#f5c451", project: "#7cc4ff", reference: "#c4b5fd", topic: "#f9a8d4", creative: "#fdba74" };
 
-function Editor({ start, purposes, onDone }: { start: MemoryEntry | null; purposes: Record<string, string>; onDone: (saved: boolean) => void }): JSX.Element {
+function Editor({ start, purposes, onDone, seed }: { start: MemoryEntry | null; purposes: Record<string, string>; onDone: (saved: boolean) => void; seed?: string }): JSX.Element {
   const [type, setType] = useState<MemoryType>(start?.memory.type ?? "topic");
-  const [name, setName] = useState(start?.name ?? "");
-  const [description, setDescription] = useState(start?.memory.description ?? "");
-  const [fact, setFact] = useState(start?.memory.fact ?? "");
+  const [name, setName] = useState(start?.name ?? (seed ? seed.split(/\s+/).slice(0, 6).join(" ").replace(/[.,;:!?]+$/, "") : ""));
+  const [description, setDescription] = useState(start?.memory.description ?? seed?.split("\n")[0]?.slice(0, 160) ?? "");
+  const [fact, setFact] = useState(start?.memory.fact ?? seed ?? "");
   const [why, setWhy] = useState(start?.memory.why ?? "");
   const [how, setHow] = useState(start?.memory.how ?? "");
   const [saving, setSaving] = useState(false);
@@ -83,11 +83,11 @@ function Editor({ start, purposes, onDone }: { start: MemoryEntry | null; purpos
   );
 }
 
-export function MemoryScreen({ entries, purposes, now, onChanged }: { entries: MemoryEntry[]; purposes: Record<string, string>; now: number; onChanged: () => void }): JSX.Element {
+export function MemoryScreen({ entries, purposes, now, onChanged, seed }: { entries: MemoryEntry[]; purposes: Record<string, string>; now: number; onChanged: () => void; seed?: string }): JSX.Element {
   const pal = usePal();
   const [filter, setFilter] = useState<MemoryType | "all">("all");
   const [open, setOpen] = useState<string | null>(null);
-  const [editing, setEditing] = useState<MemoryEntry | null | "new">(null);
+  const [editing, setEditing] = useState<MemoryEntry | null | "new">(seed ? "new" : null);
   const [failed, setFailed] = useState<string | null>(null);
 
   const counts = Object.fromEntries(MEMORY_TYPES.map((t) => [t, entries.filter((e) => e.memory.type === t).length])) as Record<MemoryType, number>;
@@ -138,6 +138,7 @@ export function MemoryScreen({ entries, purposes, now, onChanged }: { entries: M
       {editing ? (
         <Editor
           start={editing === "new" ? null : editing}
+          seed={editing === "new" ? seed : undefined}
           purposes={purposes}
           onDone={(saved) => {
             setEditing(null);

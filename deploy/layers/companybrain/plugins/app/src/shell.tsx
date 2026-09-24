@@ -4,6 +4,7 @@ import {
   ChatCircleText,
   FlowArrow,
   Graph,
+  House,
   IdentificationBadge,
   Kanban,
   Lightbulb,
@@ -22,6 +23,7 @@ import { EASE_OUT, Orb, usePal } from "./ui";
 export type NavGroup<S extends string> = { group: string | null; items: S[] };
 
 const ICONS: Record<string, typeof Brain> = {
+  home: House,
   ask: ChatCircleText,
   graph: Graph,
   overview: SquaresFour,

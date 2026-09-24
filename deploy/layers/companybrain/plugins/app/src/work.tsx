@@ -130,12 +130,12 @@ function meta(r: WorkRequest, now: number): string {
   return `${r.repoName} · asked ${when(r.createdAt, now)}${last ? ` · last update ${when(last.at, now)}` : " · no updates yet"}`;
 }
 
-export function WorkScreen({ view, login, repos, onChanged }: { view: Work; login: string; repos: string[]; onChanged: () => void }): JSX.Element {
+export function WorkScreen({ view, login, repos, onChanged, seed }: { view: Work; login: string; repos: string[]; onChanged: () => void; seed?: string }): JSX.Element {
   const pal = usePal(THEME);
   injectWorkStyles(pal);
-  const [creating, setCreating] = useState(view.requests.length === 0);
+  const [creating, setCreating] = useState(view.requests.length === 0 || Boolean(seed));
   const [repo, setRepo] = useState(repos.length === 1 ? (repos[0] ?? "") : "");
-  const [title, setTitle] = useState("");
+  const [title, setTitle] = useState(seed ?? "");
   const [detail, setDetail] = useState("");
   const [sending, setSending] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
