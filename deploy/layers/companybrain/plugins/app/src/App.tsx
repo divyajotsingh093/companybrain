@@ -6,6 +6,8 @@ import { GraphScreen } from "./graph";
 import { FilesSection, UPLOADS } from "./files";
 import { GatewayScreen } from "./gateway";
 import { Shell } from "./shell";
+import { MemoryScreen, type MemoryEntry } from "./memory";
+import { SkillsScreen, type SkillEntry } from "./skills";
 import { WorkScreen, pendingReviews, type Work } from "./work";
 import { CLIENT_LABEL, ERROR_COPY, get, reason, send, THEME, when } from "./shared";
 import {
@@ -85,6 +87,8 @@ interface Decisions {
 interface Brain {
   kinds: Record<EntryKind, Entry[]>;
   limit: number;
+  memoryTypes: Record<string, string>;
+  skillParts: Record<string, string>;
   now: number;
 }
 
@@ -980,6 +984,8 @@ export function App(): JSX.Element {
       );
     }
     if (!brain) return skeleton;
+    if (screen === "memory") return <MemoryScreen entries={(brain.kinds.memory ?? []) as unknown as MemoryEntry[]} purposes={brain.memoryTypes} now={brain.now} onChanged={loadBrain} />;
+    if (screen === "skill") return <SkillsScreen entries={(brain.kinds.skill ?? []) as unknown as SkillEntry[]} purposes={brain.skillParts} now={brain.now} onChanged={loadBrain} />;
     return <EntriesScreen key={screen} kind={screen} entries={brain.kinds[screen] ?? []} now={brain.now} limit={brain.limit} onChanged={loadBrain} />;
   };
 

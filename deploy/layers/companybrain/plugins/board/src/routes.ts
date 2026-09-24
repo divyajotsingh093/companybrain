@@ -13,6 +13,9 @@ import { assertRepo, exchangeCode, type Fetch, type GitHubClient, GitHubError } 
 import type { RateLimiter } from "./limits.ts";
 import { APP_JS_BASE64 } from "./app-bundle.ts";
 import { createBoardServer, describeError, TOOL_NAMES } from "./mcp.ts";
+import { quietly, seedHarnessSkill, seedPerson, seedProject, seedReference } from "./seed.ts";
+import { isMemoryType, MEMORY_PURPOSE, parseMemory, renderMemory } from "./memory.ts";
+import { PART_PURPOSE, parseSkill, pulse, renderSkill, SKILL_PARTS, STALE_AFTER_MS } from "./skills.ts";
 import { cleanLine, cleanText } from "./untrusted.ts";
 import { ACTIVE_AGENT_TOKENS_PER_USER, ENTRY_KINDS, KIND_PURPOSE, MAX_DOC_BODY, MAX_ENTRY_BODY, MAX_ENTRY_NAME, MAX_UPLOAD_NAME, type Store } from "./store.ts";
 import { hashToken, isAgentClient, seal, unseal } from "./token.ts";
@@ -54,6 +57,12 @@ export function createApp(deps: AppDeps): Hono {
   const origin = new URL(config.publicUrl).origin;
   const githubConfigured = Boolean(config.githubClientId && config.githubClientSecret);
   const mcpUrl = `${config.publicUrl}/mcp`;
+
+  const weaveHarness = async (uid: number, login: string, extraRepos: string[] = []): Promise<void> => {
+    const [sources, servers] = await Promise.all([store.sources(uid), store.listGateways(uid)]);
+    const repos = [...new Set([...extraRepos, ...sources.map((s) => s.repoName).filter((n) => n.includes("/"))])];
+    await seedHarnessSkill(store, uid, { login, tools: [...TOOL_NAMES].sort(), repos, servers: servers.map((g) => g.name), mcpUrl });
+  };
   const app = new Hono();
 
   app.use("*", async (c, next) => {
@@ -123,6 +132,11 @@ export function createApp(deps: AppDeps): Hono {
     if (!issued) {
       return c.html(renderMessage("Token limit reached", `You have ${ACTIVE_AGENT_TOKENS_PER_USER} active agent tokens. Revoke one before creating another.`), 429);
     }
+    await quietly("person", async () => {
+      const repos = (await githubFor(await auth.githubToken(principal.uid)).listRepos(12)).map((r) => r.fullName);
+      await seedPerson(store, principal.uid, principal.login, repos);
+      await weaveHarness(principal.uid, principal.login, repos);
+    });
     return c.html(renderTokenCreated({ login: principal.login, client, token: issued.token, mcpUrl, expiresAt: issued.row.expiresAt }));
   });
 
@@ -281,8 +295,40 @@ export function createApp(deps: AppDeps): Hono {
   app.get("/api/app/brain", async (c) => {
     const principal = await session(c);
     if (!principal) return c.json({ error: "sign_in" }, 401);
-    const kinds = await Promise.all(ENTRY_KINDS.map(async (kind) => [kind, await store.listEntries(kind, principal.uid, APP_ENTRY_LIMIT)] as const));
-    return c.json({ kinds: Object.fromEntries(kinds), limit: APP_ENTRY_LIMIT, now: now() });
+    const kinds = await Promise.all(
+      ENTRY_KINDS.map(async (kind) => {
+        const entries = await store.listEntries(kind, principal.uid, APP_ENTRY_LIMIT);
+        if (kind === "memory") return [kind, entries.map((e) => ({ ...e, memory: parseMemory(e.body) }))] as const;
+        if (kind === "skill") return [kind, entries.map((e) => ({ ...e, skill: parseSkill(e.body).parts }))] as const;
+        return [kind, entries] as const;
+      }),
+    );
+    return c.json({ kinds: Object.fromEntries(kinds), limit: APP_ENTRY_LIMIT, memoryTypes: MEMORY_PURPOSE, skillParts: PART_PURPOSE, now: now() });
+  });
+
+  app.get("/api/app/skill", async (c) => {
+    const principal = await session(c);
+    if (!principal) return c.json({ error: "sign_in" }, 401);
+    const entry = await store.getEntry("skill", principal.uid, c.req.query("name") ?? "");
+    if (!entry) return c.json({ error: "not_found" }, 404);
+    const skill = parseSkill(entry.body);
+    const [usage, links, servers] = await Promise.all([
+      store.skillUsage(principal.uid, entry.name, now() - STALE_AFTER_MS),
+      store.connections(principal.uid, entry.name),
+      store.listGateways(principal.uid),
+    ]);
+    const known = new Set(servers.map((g) => g.name));
+    const connectorText = [skill.parts.Connectors.text, ...skill.parts.Connectors.learned.map((l) => l.note)].join("\n");
+    const wanted = [...new Set([...connectorText.matchAll(/gateway:([a-z0-9][a-z0-9-]{0,39})/gi)].map((m) => (m[1] as string).toLowerCase()))];
+    return c.json({
+      name: entry.name,
+      parts: skill.parts,
+      pulse: pulse(skill, entry.updatedAt, usage.uses, now()),
+      observed: usage.tools,
+      links,
+      connectors: wanted.map((name) => ({ name, connected: known.has(name) })),
+      now: now(),
+    });
   });
 
   const jsonLimit = bodyLimit({ maxSize: 64 * 1024, onError: (c) => c.json({ error: "too_large" }, 413) });
@@ -320,6 +366,7 @@ export function createApp(deps: AppDeps): Hono {
     if (!canUseBoard(a.role) || (expectedId !== undefined && a.repoId !== expectedId)) return null;
     const result = await indexRepo(githubFor(await auth.githubToken(uid)), a.fullName);
     const indexed = await store.replaceRepo(uid, { repoId: a.repoId, repoName: a.fullName }, result.indexed);
+    await quietly("project", () => seedProject(store, uid, a.fullName, result.indexed));
     return { repo: a.fullName, indexed, skipped: result.skipped.length };
   };
 
@@ -494,6 +541,10 @@ export function createApp(deps: AppDeps): Hono {
       return c.json({ error: "unreachable", message: cleanLine(err instanceof Error ? err.message : "unknown error", 300) }, 400);
     }
     if (!(await store.putGateway(principal.uid, { name, url: new URL(url).href, tokenSealed }, MAX_GATEWAYS))) return c.json({ error: "too_many" }, 409);
+    await quietly("reference", async () => {
+      await seedReference(store, principal.uid, name, url, tools);
+      await weaveHarness(principal.uid, principal.login);
+    });
     return c.json({ ok: true, name, tools });
   });
 
@@ -599,7 +650,7 @@ export function createApp(deps: AppDeps): Hono {
     const principal = await session(c);
     if (!principal) return c.json({ error: "sign_in" }, 401);
     if (!sameOrigin(c)) return c.json({ error: "blocked" }, 403);
-    let payload: { kind?: unknown; name?: unknown; body?: unknown };
+    let payload: { kind?: unknown; name?: unknown; body?: unknown; memory?: unknown; parts?: unknown };
     try {
       payload = await c.req.json();
     } catch {
@@ -607,9 +658,25 @@ export function createApp(deps: AppDeps): Hono {
     }
     const kind = ENTRY_KINDS.find((k) => k === payload.kind);
     if (!kind) return c.json({ error: "bad_kind" }, 400);
-    if (typeof payload.name !== "string" || typeof payload.body !== "string") return c.json({ error: "bad_fields" }, 400);
-    if (payload.name.length > MAX_ENTRY_NAME || payload.body.length > MAX_ENTRY_BODY) return c.json({ error: "too_long" }, 400);
-    const result = await store.putEntry({ kind, ownerUid: principal.uid, name: payload.name, body: payload.body });
+    const str = (v: unknown): string => (typeof v === "string" ? v : "");
+    let body: string | ((current: string | null) => string) | null = typeof payload.body === "string" ? payload.body : null;
+    if (kind === "memory" && payload.memory && typeof payload.memory === "object") {
+      const m = payload.memory as Record<string, unknown>;
+      const type = str(m.type);
+      if (!isMemoryType(type) || !str(m.fact).trim()) return c.json({ error: "bad_fields" }, 400);
+      body = renderMemory({ type, description: str(m.description), fact: str(m.fact), why: str(m.why), how: str(m.how), auto: false });
+    }
+    if (kind === "skill" && payload.parts && typeof payload.parts === "object") {
+      const given = payload.parts as Record<string, unknown>;
+      body = (current) => {
+        const skill = parseSkill(current ?? "");
+        for (const p of SKILL_PARTS) skill.parts[p].text = str(given[p]).trim();
+        return renderSkill(skill);
+      };
+    }
+    if (typeof payload.name !== "string" || body === null) return c.json({ error: "bad_fields" }, 400);
+    if (payload.name.length > MAX_ENTRY_NAME || (typeof body === "string" && body.length > MAX_ENTRY_BODY)) return c.json({ error: "too_long" }, 400);
+    const result = await store.putEntry({ kind, ownerUid: principal.uid, name: payload.name, body });
     if (!result.ok) return c.json({ error: result.reason }, result.reason === "entry_quota" ? 429 : 400);
     return c.json({ entry: result.entry, created: result.created });
   });
@@ -689,10 +756,11 @@ export function createApp(deps: AppDeps): Hono {
         const call = parsed as { method?: unknown; params?: { name?: unknown; arguments?: unknown } } | null;
         if (call?.method === "tools/call") {
           const reply = (await res.clone().json().catch(() => null)) as { error?: unknown; result?: { isError?: boolean } } | null;
-          const args = (call.params?.arguments ?? {}) as { repo?: unknown; post_id?: unknown; server?: unknown; tool?: unknown };
+          const args = (call.params?.arguments ?? {}) as { repo?: unknown; post_id?: unknown; server?: unknown; tool?: unknown; name?: unknown };
           const tool = String(call.params?.name ?? "");
           const gatewayTarget = typeof args.server === "string" ? `${args.server}:${typeof args.tool === "string" ? args.tool : "tools"}` : null;
-          const subject = typeof args.repo === "string" ? args.repo : typeof args.post_id === "string" ? args.post_id : gatewayTarget;
+          const named = typeof args.name === "string" && (tool.startsWith("skill_") || tool === "memory_save") ? `${tool.startsWith("skill_") ? "skill" : "memory"}:${args.name}` : null;
+          const subject = typeof args.repo === "string" ? args.repo : typeof args.post_id === "string" ? args.post_id : (gatewayTarget ?? named);
           if (TOOL_NAMES.has(tool)) await store
             .audit({
               uid: principal.uid,

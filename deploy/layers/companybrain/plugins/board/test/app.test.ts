@@ -84,8 +84,12 @@ test("tools and identity", async (t) => {
     "gateway_tools",
     "get_file",
     "list_repos",
+    "memory_index",
+    "memory_save",
     "repo_overview",
     "search_code",
+    "skill_learn",
+    "skill_read",
     "whoami",
     "work_update",
   ]);

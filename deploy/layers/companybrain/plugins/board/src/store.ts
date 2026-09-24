@@ -198,7 +198,7 @@ export interface Post {
 
 export type PutEntryResult =
   | { ok: true; entry: Entry; created: boolean }
-  | { ok: false; reason: "entry_quota" | "empty_name" };
+  | { ok: false; reason: "entry_quota" | "empty_name" | "refused" };
 
 export interface NewPost {
   repoId: number;
@@ -530,6 +530,7 @@ const PROSE_PAIRS: ReadonlySet<string> = new Set([
   "client/server", "on/off", "in/out", "up/down", "pass/fail", "before/after", "left/right", "open/close",
   "start/stop", "win/loss", "and/also", "w/o", "n/a",
 ]);
+export const SKILL_SESSION_MS = 30 * 60_000;
 export const MAX_LINKS_PER_ENTRY = 50;
 
 const looksLikeRepo = (owner: string, repo: string): boolean =>
@@ -956,14 +957,16 @@ export function openStore(db: Database, now: () => number = Date.now) {
     return row?.hits ?? 1;
   }
 
-  async function putEntry(input: { kind: EntryKind; ownerUid: number; name: string; body: string }): Promise<PutEntryResult> {
+  async function putEntry(input: { kind: EntryKind; ownerUid: number; name: string; body: string | ((current: string | null) => string | null) }): Promise<PutEntryResult> {
     const name = cleanLine(input.name, MAX_ENTRY_NAME);
     if (!name) return { ok: false, reason: "empty_name" } as const;
-    const body = cleanText(input.body, MAX_ENTRY_BODY);
     return transaction(async (tx) => {
       await lock(tx, `entries:${input.ownerUid}:${input.kind}`);
       const at = now();
       const existing = (await tx.query<EntryRow>(`SELECT ${ENTRY_COLS} FROM entries WHERE kind = $1 AND owner_uid = $2 AND name = $3`, [input.kind, input.ownerUid, name])).rows[0];
+      const next = typeof input.body === "string" ? input.body : input.body(existing ? existing.body : null);
+      if (next === null) return { ok: false, reason: "refused" } as const;
+      const body = cleanText(next, MAX_ENTRY_BODY);
       if (existing) {
         const updated = await tx.query<EntryRow>(`UPDATE entries SET body = $1, updated_at = $2 WHERE id = $3 RETURNING ${ENTRY_COLS}`, [body, at, existing.id]);
         await rewriteLinks(tx, input.ownerUid, input.kind, name, body);
@@ -989,6 +992,20 @@ export function openStore(db: Database, now: () => number = Date.now) {
         [ownerUid, kind, name, link.toKind, link.toName],
       );
     }
+  }
+
+  async function skillUsage(uid: number, name: string, since: number): Promise<{ uses: number; tools: Array<{ tool: string; subject: string | null; n: number }> }> {
+    const subject = `skill:${cleanLine(name, MAX_ENTRY_NAME)}`.slice(0, 201);
+    const [uses, tools] = await Promise.all([
+      first<{ n: number }>(`SELECT COUNT(*)::int AS n FROM audit_log WHERE uid = $1 AND tool = 'skill_read' AND subject = $2 AND at > $3`, [uid, subject, since]),
+      rows<{ tool: string; subject: string | null; n: number }>(
+        `WITH reads AS (SELECT token_id, at FROM audit_log WHERE uid = $1 AND tool = 'skill_read' AND subject = $2 AND at > $3 ORDER BY at DESC LIMIT 200)
+         SELECT a.tool, a.subject, COUNT(*)::int AS n FROM audit_log a JOIN reads r ON a.token_id = r.token_id AND a.at >= r.at AND a.at <= r.at + $4
+         WHERE a.uid = $1 AND a.ok AND a.tool NOT IN ('skill_read', 'skill_learn', 'memory_index', 'memory_save', 'whoami') GROUP BY a.tool, a.subject ORDER BY n DESC, a.tool LIMIT 40`,
+        [uid, subject, since, SKILL_SESSION_MS],
+      ),
+    ]);
+    return { uses: uses?.n ?? 0, tools };
   }
 
   async function connections(ownerUid: number, name: string): Promise<Connections> {
@@ -1418,6 +1435,7 @@ export function openStore(db: Database, now: () => number = Date.now) {
     deleteGateway,
     putEntry,
     connections,
+    skillUsage,
     graph,
     graphView,
     listEntries,
