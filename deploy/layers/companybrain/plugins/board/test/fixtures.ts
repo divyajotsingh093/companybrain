@@ -7,6 +7,7 @@ import type { Config } from "../src/config.ts";
 import type { Database, Query } from "../src/db.ts";
 import { createGitHub, type Fetch } from "../src/github.ts";
 import { createRateLimiter } from "../src/limits.ts";
+import type { Model } from "../src/brain.ts";
 import { createApp } from "../src/routes.ts";
 import { openStore } from "../src/store.ts";
 import type { AgentClient } from "../src/token.ts";
@@ -154,7 +155,7 @@ export async function memoryDatabase(): Promise<Database> {
   return { ...wrap(pg), transaction: (run) => pg.transaction((tx) => run(wrap(tx))), close: () => pg.close() };
 }
 
-export async function buildApp(overrides: Partial<Config> = {}): Promise<Harness> {
+export async function buildApp(overrides: Partial<Config> = {}, extra: { model?: Model; gatewayFetch?: typeof fetch } = {}): Promise<Harness> {
   const clock = { now: 1_800_000_000_000 };
   const now = () => clock.now;
   const config = testConfig(overrides);
@@ -167,7 +168,7 @@ export async function buildApp(overrides: Partial<Config> = {}): Promise<Harness
     resolve: async (uid, login, repo) => resolveRepoAccess(githubFor(await auth.githubToken(uid)), uid, login, repo),
   });
   const limiter = createRateLimiter({ store, limit: config.requestsPerMinute, windowMs: 60_000 });
-  const app = createApp({ config, store, auth, access, githubFor, limiter, fetch: fakeGitHub, now });
+  const app = createApp({ config, store, auth, access, githubFor, limiter, fetch: fakeGitHub, now, ...extra });
   return { app, store, auth, config, clock };
 }
 

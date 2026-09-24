@@ -42,7 +42,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     port,
     publicUrl,
     secret,
-    databaseUrl: env.DATABASE_URL || undefined,
+    databaseUrl: env.BOARD_DATABASE_URL || env.DATABASE_URL || undefined,
     cronSecret: env.CRON_SECRET || undefined,
     githubClientId,
     githubClientSecret,

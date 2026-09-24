@@ -66,7 +66,29 @@ test("tools and identity", async (t) => {
   const h = await buildApp();
   const client = await connectAgent(t, h, await agentToken(h, "gh-alice", "claude_code"));
   const tools = (await client.listTools()).tools.map((tool) => tool.name).sort();
-  assert.deepEqual(tools, ["board_close", "board_events", "board_inbox", "board_post", "board_read", "board_release", "get_file", "list_repos", "repo_overview", "search_code", "whoami"]);
+  assert.deepEqual(tools, [
+    "board_ask",
+    "board_close",
+    "board_events",
+    "board_inbox",
+    "board_post",
+    "board_read",
+    "board_release",
+    "brain_forget",
+    "brain_links",
+    "brain_read",
+    "brain_search",
+    "brain_write",
+    "gateway_call",
+    "gateway_servers",
+    "gateway_tools",
+    "get_file",
+    "list_repos",
+    "repo_overview",
+    "search_code",
+    "whoami",
+    "work_update",
+  ]);
   assert.deepEqual([...TOOL_NAMES].sort(), tools);
   assert.deepEqual(JSON.parse((await call(client, "whoami", {})).text), { login: "alice", client: "claude_code" });
 });

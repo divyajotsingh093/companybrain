@@ -25,6 +25,14 @@ export function clamp(text: string, max: number): string {
   return text.length <= max ? text : `${text.slice(0, max)}\n[truncated ${text.length - max} characters]`;
 }
 
+export function cleanText(value: string, max: number): string {
+  return value
+    .replace(/\r\n?/g, "\n")
+    .replace(/[^\S\n\t]/gu, " ")
+    .replace(/[\p{Cc}\p{Cf}]/gu, (c) => (c === "\n" || c === "\t" ? c : ""))
+    .slice(0, max);
+}
+
 export function cleanLine(value: string, max: number): string {
   return value
     .replace(/[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]/gu, " ")

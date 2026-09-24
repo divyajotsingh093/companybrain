@@ -2,9 +2,9 @@ import { randomUUID } from "node:crypto";
 import { posix } from "node:path";
 import type { Database, Param, Query } from "./db.ts";
 import type { SwimlaneEvent } from "./swimlane.ts";
-import { cleanLine } from "./untrusted.ts";
+import { cleanLine, cleanText } from "./untrusted.ts";
 
-export const POST_TYPES = ["task", "claim", "finding", "handoff"] as const;
+export const POST_TYPES = ["task", "claim", "finding", "handoff", "decision"] as const;
 export type PostType = (typeof POST_TYPES)[number];
 export const AGENT_POST_TYPES = ["claim", "finding", "handoff"] as const;
 
@@ -23,8 +23,163 @@ export const HANDOFFS_PER_PAIR_PER_HOUR = 8;
 const HOUR_MS = 3_600_000;
 const RETAIN_EXPIRED_MS = 7 * 24 * HOUR_MS;
 
+export const ENTRY_KINDS = ["project", "memory", "skill", "process", "rule", "lesson", "record", "role"] as const;
+
+export const KIND_PURPOSE: Record<(typeof ENTRY_KINDS)[number], string> = {
+  project: "a piece of ongoing work and the state it is in",
+  memory: "something learned that should survive this session",
+  skill: "a reusable instruction someone can follow later",
+  process: "how a recurring piece of work actually gets done, step by step",
+  rule: "a boundary, policy or approval requirement that constrains what may be done",
+  lesson: "what went wrong once and what to do differently",
+  record: "an observed fact with its evidence, not an opinion",
+  role: "who owns an area and what they decide",
+};
+export type EntryKind = (typeof ENTRY_KINDS)[number];
+export const MAX_ENTRIES_PER_KIND = 200;
+export const MAX_ENTRY_BODY = 20_000;
+export const MAX_ENTRY_NAME = 120;
+export const MAX_POST_BODY = 20_000;
+export const MAX_DOC_BODY = 40_000;
+export const MAX_DOCS_PER_REPO = 300;
+export const MAX_DOCS_PER_USER = 2_000;
+export const GRAPH_DOCS_PER_REPO = 12;
+export const GRAPH_MAX_LINKS = 4_000;
+export const UPLOAD_REPO_ID = 0;
+export const WORK_STATUSES = ["open", "working", "review", "changes", "done", "closed"] as const;
+export type WorkStatus = (typeof WORK_STATUSES)[number];
+export const UPDATE_KINDS = ["progress", "submitted", "accepted", "changes"] as const;
+export type UpdateKind = (typeof UPDATE_KINDS)[number];
+export const MAX_UPDATES_PER_TASK = 200;
+const ANSWER_VISIBLE_MS = 30 * 24 * 3_600_000;
+export const UPLOAD_REPO_NAME = "Uploaded files";
+export const MAX_UPLOAD_NAME = 160;
+
+export interface Doc {
+  id: string;
+  repoId: number;
+  repoName: string;
+  path: string;
+  title: string;
+  body: string;
+  indexedAt: number;
+}
+
+export interface WorkUpdate {
+  id: string;
+  taskId: string;
+  kind: UpdateKind;
+  body: string;
+  authorLogin: string;
+  client: string;
+  at: number;
+}
+
+export type WorkResult = { ok: true; status: WorkStatus } | { ok: false; reason: "not_found" | "wrong_state" | "update_quota" };
+
+export interface Link {
+  fromKind: string;
+  fromName: string;
+  toKind: string;
+  toName: string;
+}
+
+export interface Connections {
+  outgoing: Link[];
+  incoming: Link[];
+}
+
+export const MARK_OPEN = "\uE000";
+export const MARK_CLOSE = "\uE001";
+
+export function toSearchQuery(text: string): string {
+  return text
+    .split(/\s+/)
+    .map((w) => w.replace(/["']/g, "").replace(/^[-!]+/, ""))
+    .filter((w) => w && w.toLowerCase() !== "or")
+    .slice(0, 40)
+    .join(" or ");
+}
+
+export interface SearchOptions {
+  allow: (repoName: string, repoId: number) => Promise<boolean>;
+  limit?: number;
+  kinds?: string[];
+}
+
+export interface Found {
+  kind: "document" | EntryKind;
+  title: string;
+  source: string;
+  repo: string | null;
+  body: string;
+  snippet: string;
+  rank: number;
+}
+
+export interface GraphNode {
+  id: string;
+  kind: string;
+  label: string;
+  detail: string | null;
+}
+
+export interface GraphEdge {
+  source: string;
+  target: string;
+  relation: string;
+}
+
+interface DocRow {
+  id: string;
+  repo_id: number;
+  repo_name: string;
+  path: string;
+  title: string;
+  body: string;
+  indexed_at: number;
+}
+
+function toDoc(r: DocRow): Doc {
+  return { id: r.id, repoId: r.repo_id, repoName: r.repo_name, path: r.path, title: r.title, body: r.body, indexedAt: r.indexed_at };
+}
+
+export interface Entry {
+  id: string;
+  kind: EntryKind;
+  ownerUid: number;
+  name: string;
+  body: string;
+  createdAt: number;
+  updatedAt: number;
+}
+
+interface EntryRow {
+  id: string;
+  kind: EntryKind;
+  owner_uid: number;
+  name: string;
+  body: string;
+  created_at: number;
+  updated_at: number;
+}
+
+function toEntry(r: EntryRow): Entry {
+  return {
+    id: r.id,
+    kind: r.kind,
+    ownerUid: r.owner_uid,
+    name: r.name,
+    body: r.body,
+    createdAt: r.created_at,
+    updatedAt: r.updated_at,
+  };
+}
+
 export interface Post {
   id: string;
+  resolution?: string | null;
+  status?: WorkStatus;
   repoId: number;
   repoName: string;
   type: PostType;
@@ -40,6 +195,10 @@ export interface Post {
   releasedAt: number | null;
   closedAt: number | null;
 }
+
+export type PutEntryResult =
+  | { ok: true; entry: Entry; created: boolean }
+  | { ok: false; reason: "entry_quota" | "empty_name" };
 
 export interface NewPost {
   repoId: number;
@@ -142,6 +301,8 @@ interface PostRow {
   expires_at: number | null;
   released_at: number | null;
   closed_at: number | null;
+  resolution: string | null;
+  status: string | null;
 }
 
 function toPost(r: PostRow): Post {
@@ -161,6 +322,8 @@ function toPost(r: PostRow): Post {
     expiresAt: r.expires_at,
     releasedAt: r.released_at,
     closedAt: r.closed_at,
+    resolution: r.resolution ?? null,
+    ...(r.type === "task" ? { status: (r.status ?? "open") as WorkStatus } : {}),
   };
 }
 
@@ -293,7 +456,108 @@ const SCHEMA = `
     window_start BIGINT NOT NULL,
     hits INTEGER NOT NULL
   );
+  ALTER TABLE posts ADD COLUMN IF NOT EXISTS resolution TEXT;
+  CREATE INDEX IF NOT EXISTS posts_open_decisions ON posts (author_uid, created_at DESC) WHERE type = 'decision' AND closed_at IS NULL;
+  ALTER TABLE posts ADD COLUMN IF NOT EXISTS status TEXT;
+  ALTER TABLE posts DROP CONSTRAINT IF EXISTS posts_task_status;
+  ALTER TABLE posts ADD CONSTRAINT posts_task_status CHECK (status IS NULL OR status IN ('open', 'working', 'review', 'changes', 'done', 'closed'));
+  CREATE TABLE IF NOT EXISTS work_updates (
+    seq BIGSERIAL,
+    id TEXT PRIMARY KEY,
+    task_id TEXT NOT NULL,
+    kind TEXT NOT NULL,
+    body TEXT NOT NULL,
+    author_uid BIGINT NOT NULL,
+    author_login TEXT NOT NULL,
+    client TEXT NOT NULL,
+    at BIGINT NOT NULL
+  );
+  CREATE INDEX IF NOT EXISTS work_updates_task ON work_updates (task_id, seq);
+  CREATE TABLE IF NOT EXISTS links (
+    owner_uid BIGINT NOT NULL,
+    from_kind TEXT NOT NULL,
+    from_name TEXT NOT NULL,
+    to_kind TEXT NOT NULL,
+    to_name TEXT NOT NULL,
+    PRIMARY KEY (owner_uid, from_kind, from_name, to_kind, to_name)
+  );
+  CREATE INDEX IF NOT EXISTS links_incoming ON links (owner_uid, to_kind, to_name);
+  CREATE TABLE IF NOT EXISTS documents (
+    id TEXT PRIMARY KEY,
+    owner_uid BIGINT NOT NULL,
+    repo_id BIGINT NOT NULL,
+    repo_name TEXT NOT NULL,
+    path TEXT NOT NULL,
+    title TEXT NOT NULL,
+    body TEXT NOT NULL,
+    indexed_at BIGINT NOT NULL,
+    checked_at BIGINT
+  );
+  CREATE UNIQUE INDEX IF NOT EXISTS documents_unique ON documents (owner_uid, repo_id, path);
+  DROP INDEX IF EXISTS documents_search;
+  ALTER TABLE documents ADD COLUMN IF NOT EXISTS search tsvector GENERATED ALWAYS AS (to_tsvector('english', title || ' ' || body)) STORED;
+  CREATE INDEX IF NOT EXISTS documents_search_v2 ON documents USING GIN (search);
+  CREATE TABLE IF NOT EXISTS gateway_servers (
+    owner_uid BIGINT NOT NULL,
+    name TEXT NOT NULL,
+    url TEXT NOT NULL,
+    token_sealed TEXT,
+    created_at BIGINT NOT NULL,
+    PRIMARY KEY (owner_uid, name)
+  );
+  ALTER TABLE posts DROP CONSTRAINT IF EXISTS posts_decision_needs_resolution;
+  ALTER TABLE posts ADD CONSTRAINT posts_decision_needs_resolution CHECK (type <> 'decision' OR closed_at IS NULL OR resolution IS NOT NULL);
+  CREATE TABLE IF NOT EXISTS entries (
+    id TEXT PRIMARY KEY,
+    kind TEXT NOT NULL,
+    owner_uid BIGINT NOT NULL,
+    name TEXT NOT NULL,
+    body TEXT NOT NULL,
+    created_at BIGINT NOT NULL,
+    updated_at BIGINT NOT NULL
+  );
+  CREATE UNIQUE INDEX IF NOT EXISTS entries_unique ON entries (kind, owner_uid, name);
+  CREATE INDEX IF NOT EXISTS entries_listing ON entries (kind, owner_uid, updated_at DESC);
+  ALTER TABLE entries ADD COLUMN IF NOT EXISTS search tsvector GENERATED ALWAYS AS (to_tsvector('english', name || ' ' || body)) STORED;
+  CREATE INDEX IF NOT EXISTS entries_search ON entries USING GIN (search);
 `;
+
+const WIKI_LINK = /\[\[([^\]\n]{1,120})\]\]/g;
+const REPO_MENTION = /(?:^|[\s(])([A-Za-z][\w-]{0,38})\/([A-Za-z][\w-]{0,99})(?=$|[\s),]|\.(?!\w))/g;
+
+const PROSE_PAIRS: ReadonlySet<string> = new Set([
+  "and/or", "either/or", "yes/no", "true/false", "he/she", "his/her", "him/her", "read/write", "input/output",
+  "client/server", "on/off", "in/out", "up/down", "pass/fail", "before/after", "left/right", "open/close",
+  "start/stop", "win/loss", "and/also", "w/o", "n/a",
+]);
+export const MAX_LINKS_PER_ENTRY = 50;
+
+const looksLikeRepo = (owner: string, repo: string): boolean =>
+  owner.length >= 2 &&
+  repo.length >= 2 &&
+  !/^[A-Z]+$/.test(owner) &&
+  !/^[A-Z]+$/.test(repo) &&
+  !PROSE_PAIRS.has(`${owner}/${repo}`.toLowerCase());
+
+export function extractLinks(body: string): Array<{ toKind: string; toName: string }> {
+  const out = new Map<string, { toKind: string; toName: string }>();
+  for (const m of body.matchAll(WIKI_LINK)) {
+    if (out.size >= MAX_LINKS_PER_ENTRY) break;
+    const name = cleanLine(m[1] ?? "", MAX_ENTRY_NAME);
+    if (name) out.set(`entry:${name.toLowerCase()}`, { toKind: "entry", toName: name });
+  }
+  for (const m of body.matchAll(REPO_MENTION)) {
+    if (out.size >= MAX_LINKS_PER_ENTRY) break;
+    const owner = m[1] ?? "";
+    const repo = m[2] ?? "";
+    if (!looksLikeRepo(owner, repo)) continue;
+    const name = `${owner}/${repo}`;
+    if (name.length <= 140) out.set(`repo:${name.toLowerCase()}`, { toKind: "repo", toName: name });
+  }
+  return [...out.values()];
+}
+
+const ENTRY_COLS = "id, kind, owner_uid, name, body, created_at, updated_at";
 
 const recordEvent = (q: Query, repoId: number, at: number, kind: EventKind, post: { id: string; type: PostType; title: string }, actor: Actor) =>
   q.query(`INSERT INTO board_events (repo_id, at, kind, post_id, post_type, title, actor_uid, actor_login, client) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`, [
@@ -320,7 +584,7 @@ export function openStore(db: Database, now: () => number = Date.now) {
       .transaction(async (tx) => {
         await tx.query(`SET LOCAL lock_timeout = '10s'`);
         const current = async () =>
-          (await tx.query<{ ok: boolean }>(`SELECT to_regclass('rate_limits') IS NOT NULL AND to_regclass('posts_open') IS NOT NULL AND to_regclass('audit_log_at') IS NOT NULL AND to_regclass('board_events_repo_id') IS NOT NULL AS ok`)).rows[0]?.ok;
+          (await tx.query<{ ok: boolean }>(`SELECT to_regclass('rate_limits') IS NOT NULL AND to_regclass('posts_open') IS NOT NULL AND to_regclass('audit_log_at') IS NOT NULL AND to_regclass('board_events_repo_id') IS NOT NULL AND to_regclass('entries_listing') IS NOT NULL AND to_regclass('posts_open_decisions') IS NOT NULL AND to_regclass('documents_search_v2') IS NOT NULL AND to_regclass('entries_search') IS NOT NULL AND to_regclass('links_incoming') IS NOT NULL AND to_regclass('work_updates_task') IS NOT NULL AND to_regclass('gateway_servers') IS NOT NULL AS ok`)).rows[0]?.ok;
         if (await current()) return;
         await lock(tx, "companybrain-board:schema");
         if (await current()) return;
@@ -355,7 +619,7 @@ export function openStore(db: Database, now: () => number = Date.now) {
   const count = async (q: Query, text: string, params: Param[]) => (await q.query<{ n: number }>(text, params)).rows[0]?.n ?? 0;
 
   async function addPost(input: NewPost): Promise<AddResult> {
-    const p = { ...input, title: cleanLine(input.title, 200) };
+    const p = { ...input, title: cleanLine(input.title, 200), body: cleanText(input.body, MAX_POST_BODY) };
     return transaction(async (tx) => {
       await lock(tx, `user:${p.authorUid}`);
       await lock(tx, `repo:${p.repoId}`);
@@ -439,7 +703,7 @@ export function openStore(db: Database, now: () => number = Date.now) {
       opts.type === "task" || opts.type === "claim"
         ? []
         : posts(
-            `SELECT * FROM posts WHERE repo_id = $1 AND type IN ('finding', 'handoff') AND closed_at IS NULL AND ($2::text = '' OR type = $2::text) ORDER BY created_at DESC, id DESC LIMIT $3`,
+            `SELECT * FROM posts WHERE repo_id = $1 AND type IN ('finding', 'handoff', 'decision') AND closed_at IS NULL AND ($2::text = '' OR type = $2::text) ORDER BY created_at DESC, id DESC LIMIT $3`,
             [repoId, opts.type ?? "", limit],
           ),
     ]);
@@ -466,13 +730,16 @@ export function openStore(db: Database, now: () => number = Date.now) {
     });
   }
 
-  async function closePost(id: string, repoId: number, actor: Actor): Promise<boolean> {
+  async function closePost(id: string, repoId: number, actor: Actor, resolution?: string): Promise<boolean> {
     return transaction(async (tx) => {
       await lock(tx, `repo:${repoId}`);
       const at = now();
       const closed = await tx.query<{ type: PostType; title: string }>(
-        `UPDATE posts SET closed_at = $1, closed_by = $2 WHERE id = $3 AND repo_id = $4 AND type <> 'claim' AND closed_at IS NULL RETURNING type, title`,
-        [at, actor.uid, id, repoId],
+        `UPDATE posts SET closed_at = $1, closed_by = $2, resolution = $5, status = CASE WHEN type = 'task' THEN 'closed' ELSE status END
+         WHERE id = $3 AND repo_id = $4 AND type <> 'claim' AND closed_at IS NULL
+           AND (type <> 'decision' OR btrim(coalesce($5::text, '')) <> '')
+           AND (type <> 'task' OR coalesce(status, 'open') <> 'review') RETURNING type, title`,
+        [at, actor.uid, id, repoId, resolution === undefined ? null : cleanText(resolution, MAX_POST_BODY)],
       );
       const row = closed.rows[0];
       if (!row) return false;
@@ -566,7 +833,8 @@ export function openStore(db: Database, now: () => number = Date.now) {
     return list.map((r) => r.subject);
   }
 
-  async function auditTrail(uid: number, limit = 50): Promise<AuditEntry[]> {
+  async function auditTrail(uid: number, limit = 50, tool?: string): Promise<AuditEntry[]> {
+    if (tool) return rows(`SELECT at, client, tool, subject, ok FROM audit_log WHERE uid = $1 AND tool = $3 ORDER BY at DESC, id DESC LIMIT $2`, [uid, limit, tool]);
     return rows(`SELECT at, client, tool, subject, ok FROM audit_log WHERE uid = $1 ORDER BY at DESC, id DESC LIMIT $2`, [uid, limit]);
   }
 
@@ -671,6 +939,7 @@ export function openStore(db: Database, now: () => number = Date.now) {
       await lock(tx, `credential:${uid}`);
       await tx.query(`DELETE FROM credentials WHERE uid = $1`, [uid]);
       await tx.query(`DELETE FROM audit_log WHERE uid = $1`, [uid]);
+      await tx.query(`DELETE FROM gateway_servers WHERE owner_uid = $1`, [uid]);
     });
   }
 
@@ -687,16 +956,432 @@ export function openStore(db: Database, now: () => number = Date.now) {
     return row?.hits ?? 1;
   }
 
+  async function putEntry(input: { kind: EntryKind; ownerUid: number; name: string; body: string }): Promise<PutEntryResult> {
+    const name = cleanLine(input.name, MAX_ENTRY_NAME);
+    if (!name) return { ok: false, reason: "empty_name" } as const;
+    const body = cleanText(input.body, MAX_ENTRY_BODY);
+    return transaction(async (tx) => {
+      await lock(tx, `entries:${input.ownerUid}:${input.kind}`);
+      const at = now();
+      const existing = (await tx.query<EntryRow>(`SELECT ${ENTRY_COLS} FROM entries WHERE kind = $1 AND owner_uid = $2 AND name = $3`, [input.kind, input.ownerUid, name])).rows[0];
+      if (existing) {
+        const updated = await tx.query<EntryRow>(`UPDATE entries SET body = $1, updated_at = $2 WHERE id = $3 RETURNING ${ENTRY_COLS}`, [body, at, existing.id]);
+        await rewriteLinks(tx, input.ownerUid, input.kind, name, body);
+        return { ok: true, entry: toEntry(updated.rows[0] as EntryRow), created: false } as const;
+      }
+      const held = await count(tx, `SELECT COUNT(*) AS n FROM entries WHERE kind = $1 AND owner_uid = $2`, [input.kind, input.ownerUid]);
+      if (held >= MAX_ENTRIES_PER_KIND) return { ok: false, reason: "entry_quota" } as const;
+      const inserted = await tx.query<EntryRow>(
+        `INSERT INTO entries (id, kind, owner_uid, name, body, created_at, updated_at) VALUES ($1, $2, $3, $4, $5, $6, $6) RETURNING ${ENTRY_COLS}`,
+        [randomUUID(), input.kind, input.ownerUid, name, body, at],
+      );
+      await rewriteLinks(tx, input.ownerUid, input.kind, name, body);
+      return { ok: true, entry: toEntry(inserted.rows[0] as EntryRow), created: true } as const;
+    });
+  }
+
+  async function rewriteLinks(q: Query, ownerUid: number, kind: string, name: string, body: string): Promise<void> {
+    await q.query(`DELETE FROM links WHERE owner_uid = $1 AND from_kind = $2 AND from_name = $3`, [ownerUid, kind, name]);
+    for (const link of extractLinks(body)) {
+      if (link.toKind === "entry" && link.toName.toLowerCase() === name.toLowerCase()) continue;
+      await q.query(
+        `INSERT INTO links (owner_uid, from_kind, from_name, to_kind, to_name) VALUES ($1, $2, $3, $4, $5) ON CONFLICT DO NOTHING`,
+        [ownerUid, kind, name, link.toKind, link.toName],
+      );
+    }
+  }
+
+  async function connections(ownerUid: number, name: string): Promise<Connections> {
+    const clean = cleanLine(name, MAX_ENTRY_NAME);
+    const shape = (r: { from_kind: string; from_name: string; to_kind: string; to_name: string }): Link => ({
+      fromKind: r.from_kind,
+      fromName: r.from_name,
+      toKind: r.to_kind,
+      toName: r.to_name,
+    });
+    const [outgoing, incoming] = await Promise.all([
+      rows<{ from_kind: string; from_name: string; to_kind: string; to_name: string }>(
+        `SELECT * FROM links WHERE owner_uid = $1 AND from_name = $2 ORDER BY to_kind, to_name LIMIT 50`,
+        [ownerUid, clean],
+      ),
+      rows<{ from_kind: string; from_name: string; to_kind: string; to_name: string }>(
+        `SELECT * FROM links WHERE owner_uid = $1 AND lower(to_name) = lower($2) ORDER BY from_kind, from_name LIMIT 50`,
+        [ownerUid, clean],
+      ),
+    ]);
+    return { outgoing: outgoing.map(shape), incoming: incoming.map(shape) };
+  }
+
+  async function graph(ownerUid: number, limit = 200): Promise<Link[]> {
+    return (
+      await rows<{ from_kind: string; from_name: string; to_kind: string; to_name: string }>(
+        `SELECT * FROM links WHERE owner_uid = $1 ORDER BY from_kind, from_name LIMIT $2`,
+        [ownerUid, Math.min(Math.max(limit, 1), 500)],
+      )
+    ).map((r) => ({ fromKind: r.from_kind, fromName: r.from_name, toKind: r.to_kind, toName: r.to_name }));
+  }
+
+  async function graphView(ownerUid: number, allow: (repoName: string, repoId: number) => Promise<boolean>): Promise<{ nodes: GraphNode[]; edges: GraphEdge[] }> {
+    const [entryRows, linkRows, docRows, decisionRows] = await Promise.all([
+      rows<{ kind: string; name: string; head: string }>(
+        `SELECT kind, name, left(body, 400) AS head FROM entries WHERE owner_uid = $1 ORDER BY updated_at DESC LIMIT $2`,
+        [ownerUid, MAX_ENTRIES_PER_KIND * ENTRY_KINDS.length],
+      ),
+      rows<{ from_kind: string; from_name: string; to_kind: string; to_name: string }>(
+        `SELECT from_kind, from_name, to_kind, to_name FROM links WHERE owner_uid = $1 ORDER BY from_kind, from_name, to_kind, to_name LIMIT $2`,
+        [ownerUid, GRAPH_MAX_LINKS],
+      ),
+      rows<{ repo_id: number; repo_name: string; path: string; title: string }>(
+        `SELECT repo_id, repo_name, path, title FROM (
+           SELECT repo_id, repo_name, path, title, ROW_NUMBER() OVER (PARTITION BY repo_id ORDER BY indexed_at DESC, path) AS rank FROM documents WHERE owner_uid = $1
+         ) ranked WHERE rank <= $2`,
+        [ownerUid, GRAPH_DOCS_PER_REPO],
+      ),
+      rows<{ id: string; repo_id: number; repo_name: string; title: string; resolution: string | null }>(
+        `SELECT id, repo_id, repo_name, title, resolution FROM posts WHERE type = 'decision' AND author_uid = $1 ORDER BY created_at DESC LIMIT 100`,
+        [ownerUid],
+      ),
+    ]);
+
+    const repoIds = new Map<number, string>();
+    for (const d of docRows) if (Number(d.repo_id) !== UPLOAD_REPO_ID) repoIds.set(Number(d.repo_id), d.repo_name);
+    for (const p of decisionRows) repoIds.set(Number(p.repo_id), p.repo_name);
+    const reachable = new Map(await Promise.all([...repoIds].map(async ([id, name]) => [id, await allow(name, id).catch(() => false)] as const)));
+    const canSee = (repoId: number): boolean => Number(repoId) === UPLOAD_REPO_ID || reachable.get(Number(repoId)) === true;
+
+    const nodes = new Map<string, GraphNode>();
+    const edges: GraphEdge[] = [];
+    const firstLine = (body: string): string | null => body.split("\n").find((l) => l.trim())?.trim().slice(0, 160) ?? null;
+    const repoNode = (name: string): string => {
+      const id = `repo:${name.toLowerCase()}`;
+      if (!nodes.has(id)) nodes.set(id, { id, kind: "repo", label: name, detail: null });
+      return id;
+    };
+    const entryId = (kind: string, name: string): string => `entry:${kind}:${name.toLowerCase()}`;
+
+    const byName = new Map<string, string[]>();
+    for (const e of entryRows) {
+      const id = entryId(e.kind, e.name);
+      nodes.set(id, { id, kind: e.kind, label: e.name, detail: firstLine(e.head) });
+      const key = e.name.toLowerCase();
+      byName.set(key, [...(byName.get(key) ?? []), id]);
+    }
+
+    for (const l of linkRows) {
+      const from = entryId(l.from_kind, l.from_name);
+      if (!nodes.has(from)) continue;
+      if (l.to_kind === "repo") {
+        edges.push({ source: from, target: repoNode(l.to_name), relation: "mentions" });
+        continue;
+      }
+      const targets = byName.get(l.to_name.toLowerCase());
+      if (targets?.length) {
+        for (const to of targets) if (to !== from) edges.push({ source: from, target: to, relation: "links" });
+        continue;
+      }
+      const gap = `missing:${l.to_name.toLowerCase()}`;
+      if (!nodes.has(gap)) nodes.set(gap, { id: gap, kind: "missing", label: l.to_name, detail: "Referenced but never written down" });
+      edges.push({ source: from, target: gap, relation: "links" });
+    }
+
+    for (const d of docRows) {
+      if (!canSee(d.repo_id)) continue;
+      const id = `doc:${d.repo_id}/${d.path}`;
+      nodes.set(id, { id, kind: "document", label: d.title, detail: `${d.repo_name}/${d.path}` });
+      edges.push({ source: id, target: repoNode(d.repo_name), relation: "documents" });
+    }
+
+    for (const p of decisionRows) {
+      if (!canSee(p.repo_id)) continue;
+      const id = `decision:${p.id}`;
+      nodes.set(id, { id, kind: "decision", label: p.title, detail: p.resolution ? `Ruled: ${p.resolution.slice(0, 160)}` : "Waiting on you" });
+      edges.push({ source: id, target: repoNode(p.repo_name), relation: "decided" });
+    }
+
+    return { nodes: [...nodes.values()], edges };
+  }
+
+
+  async function listEntries(kind: EntryKind, ownerUid: number, limit = MAX_ENTRIES_PER_KIND): Promise<Entry[]> {
+    const capped = Math.min(Math.max(limit, 1), MAX_ENTRIES_PER_KIND);
+    return (await rows<EntryRow>(`SELECT ${ENTRY_COLS} FROM entries WHERE kind = $1 AND owner_uid = $2 ORDER BY updated_at DESC, id DESC LIMIT $3`, [kind, ownerUid, capped])).map(toEntry);
+  }
+
+  async function getEntry(kind: EntryKind, ownerUid: number, name: string): Promise<Entry | null> {
+    const row = await first<EntryRow>(`SELECT ${ENTRY_COLS} FROM entries WHERE kind = $1 AND owner_uid = $2 AND name = $3`, [kind, ownerUid, cleanLine(name, MAX_ENTRY_NAME)]);
+    return row ? toEntry(row) : null;
+  }
+
+  async function deleteEntry(kind: EntryKind, ownerUid: number, name: string): Promise<boolean> {
+    const clean = cleanLine(name, MAX_ENTRY_NAME);
+    return transaction(async (tx) => {
+      await lock(tx, `entries:${ownerUid}:${kind}`);
+      const removed = (await tx.query(`DELETE FROM entries WHERE kind = $1 AND owner_uid = $2 AND name = $3`, [kind, ownerUid, clean])).count;
+      if (removed) await tx.query(`DELETE FROM links WHERE owner_uid = $1 AND from_kind = $2 AND from_name = $3`, [ownerUid, kind, clean]);
+      return removed > 0;
+    });
+  }
+
+
+
+  const NEXT: Record<UpdateKind, { from: ReadonlyArray<string>; to: WorkStatus }> = {
+    progress: { from: ["open", "working", "changes"], to: "working" },
+    submitted: { from: ["open", "working", "changes"], to: "review" },
+    accepted: { from: ["review"], to: "done" },
+    changes: { from: ["review"], to: "changes" },
+  };
+
+  async function advanceWork(taskId: string, kind: UpdateKind, body: string, actor: Actor): Promise<WorkResult> {
+    return transaction(async (tx) => {
+      const task = (await tx.query<PostRow>(`SELECT * FROM posts WHERE id = $1 AND type = 'task' FOR UPDATE`, [taskId])).rows[0];
+      if (!task || task.closed_at !== null) return { ok: false, reason: "not_found" } as const;
+      const current = task.status ?? "open";
+      const step = NEXT[kind];
+      if (!step.from.includes(current)) return { ok: false, reason: "wrong_state" } as const;
+      if (kind === "progress" || kind === "submitted") {
+        const updates = await count(tx, `SELECT COUNT(*) AS n FROM work_updates WHERE task_id = $1`, [taskId]);
+        if (updates >= MAX_UPDATES_PER_TASK) return { ok: false, reason: "update_quota" } as const;
+      }
+      const at = now();
+      await tx.query(
+        `INSERT INTO work_updates (id, task_id, kind, body, author_uid, author_login, client, at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+        [randomUUID(), taskId, kind, cleanText(body, MAX_POST_BODY), actor.uid, actor.login, actor.client, at],
+      );
+      if (step.to === "done") {
+        await tx.query(`UPDATE posts SET status = 'done', closed_at = $2, closed_by = $3, resolution = $4 WHERE id = $1`, [taskId, at, actor.uid, cleanText(body, MAX_POST_BODY) || "Accepted"]);
+        await recordEvent(tx, task.repo_id, at, "post.closed", { id: taskId, type: "task", title: task.title }, actor);
+      } else {
+        await tx.query(`UPDATE posts SET status = $2 WHERE id = $1`, [taskId, step.to]);
+      }
+      return { ok: true, status: step.to } as const;
+    });
+  }
+
+  async function workUpdates(taskId: string): Promise<WorkUpdate[]> {
+    return (
+      await rows<{ id: string; task_id: string; kind: UpdateKind; body: string; author_login: string; client: string; at: number }>(
+        `SELECT * FROM (SELECT * FROM work_updates WHERE task_id = $1 ORDER BY seq DESC LIMIT ${MAX_UPDATES_PER_TASK}) latest ORDER BY seq ASC`,
+        [taskId],
+      )
+    ).map((r) => ({ id: r.id, taskId: r.task_id, kind: r.kind, body: r.body, authorLogin: r.author_login, client: r.client, at: r.at }));
+  }
+
+  async function requestsBy(authorUid: number, limit = 100): Promise<Post[]> {
+    return (
+      await rows<PostRow>(
+        `SELECT * FROM posts WHERE type = 'task' AND author_uid = $1 AND (closed_at IS NULL OR closed_at > $2) ORDER BY created_at DESC LIMIT $3`,
+        [authorUid, now() - RETAIN_EXPIRED_MS, Math.min(Math.max(limit, 1), 200)],
+      )
+    ).map(toPost);
+  }
+
+  async function changesRequestedFor(uid: number, client: string, limit = 20): Promise<Post[]> {
+    return (
+      await rows<PostRow>(
+        `SELECT p.* FROM posts p WHERE p.type = 'task' AND p.status = 'changes' AND p.closed_at IS NULL
+           AND EXISTS (SELECT 1 FROM work_updates u WHERE u.task_id = p.id AND u.kind = 'submitted' AND u.author_uid = $1 AND u.client = $2)
+         ORDER BY p.created_at DESC LIMIT $3`,
+        [uid, client, Math.min(Math.max(limit, 1), 100)],
+      )
+    ).map(toPost);
+  }
+
+  async function openDecisions(authorUid: number, limit = 50): Promise<Post[]> {
+    const capped = Math.min(Math.max(limit, 1), 100);
+    return (
+      await rows<PostRow>(`SELECT * FROM posts WHERE type = 'decision' AND author_uid = $1 AND closed_at IS NULL ORDER BY created_at DESC, id DESC LIMIT $2`, [authorUid, capped])
+    ).map(toPost);
+  }
+
+  async function answeredDecisions(authorUid: number, client: string, limit = 20): Promise<Post[]> {
+    return (
+      await rows<PostRow>(
+        `SELECT * FROM posts WHERE type = 'decision' AND author_uid = $1 AND client = $2 AND resolution IS NOT NULL AND closed_at > $3
+         ORDER BY closed_at DESC, id DESC LIMIT $4`,
+        [authorUid, client, now() - ANSWER_VISIBLE_MS, Math.min(Math.max(limit, 1), 100)],
+      )
+    ).map(toPost);
+  }
+
+  async function putDocument(d: { ownerUid: number; repoId: number; repoName: string; path: string; title: string; body: string }): Promise<boolean> {
+    const title = cleanLine(d.title, 200);
+    const body = cleanText(d.body, MAX_DOC_BODY);
+    if (!title || !body.trim()) return false;
+    return transaction(async (tx) => {
+      await lock(tx, `documents:${d.ownerUid}`);
+      const at = now();
+      const existing = (await tx.query<{ id: string }>(`SELECT id FROM documents WHERE owner_uid = $1 AND repo_id = $2 AND path = $3`, [d.ownerUid, d.repoId, d.path])).rows[0];
+      if (existing) {
+        await tx.query(`UPDATE documents SET repo_name = $1, title = $2, body = $3, indexed_at = $4 WHERE id = $5`, [d.repoName, title, body, at, existing.id]);
+        return true;
+      }
+      const held = await count(tx, `SELECT COUNT(*) AS n FROM documents WHERE owner_uid = $1`, [d.ownerUid]);
+      if (held >= MAX_DOCS_PER_USER) return false;
+      await tx.query(`INSERT INTO documents (id, owner_uid, repo_id, repo_name, path, title, body, indexed_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`, [
+        randomUUID(),
+        d.ownerUid,
+        d.repoId,
+        d.repoName,
+        d.path,
+        title,
+        body,
+        at,
+      ]);
+      return true;
+    });
+  }
+
+  async function search(ownerUid: number, query: string, opts: SearchOptions): Promise<Found[]> {
+    const q = toSearchQuery(cleanLine(query, 400));
+    if (!q) return [];
+    const capped = Math.min(Math.max(opts.limit ?? 8, 1), 25);
+    const wanted = new Set(opts.kinds?.length ? opts.kinds : ["document", ...ENTRY_KINDS]);
+    const entryKinds = ENTRY_KINDS.filter((k) => wanted.has(k));
+    const tsq = `websearch_to_tsquery('english', $2)`;
+    const headline = (col: string) => `ts_headline('english', ${col}, ${tsq}, 'StartSel=${MARK_OPEN},StopSel=${MARK_CLOSE},MaxWords=26,MinWords=10,MaxFragments=2,FragmentDelimiter= ... ')`;
+    const [docs, entries] = await Promise.all([
+      wanted.has("document")
+        ? rows<DocRow & { rank: number; snippet: string }>(
+            `SELECT id, repo_id, repo_name, path, title, body, indexed_at, ts_rank(search, ${tsq}) AS rank, ${headline("body")} AS snippet FROM documents
+             WHERE owner_uid = $1 AND search @@ ${tsq} ORDER BY rank DESC LIMIT $3`,
+            [ownerUid, q, capped * 6],
+          )
+        : [],
+      entryKinds.length
+        ? rows<EntryRow & { rank: number; snippet: string }>(
+            `SELECT id, kind, owner_uid, name, body, created_at, updated_at, ts_rank(search, ${tsq}) AS rank, ${headline("body")} AS snippet FROM entries
+             WHERE owner_uid = $1 AND kind = ANY(string_to_array($4, ',')) AND search @@ ${tsq} ORDER BY rank DESC LIMIT $3`,
+            [ownerUid, q, capped, entryKinds.join(",")],
+          )
+        : [],
+    ]);
+    const repos = new Map<number, string>();
+    for (const d of docs) if (Number(d.repo_id) !== UPLOAD_REPO_ID) repos.set(Number(d.repo_id), d.repo_name);
+    const verdicts = new Map(
+      await Promise.all([...repos].map(async ([id, name]) => [id, await opts.allow(name, id).catch(() => false)] as const)),
+    );
+    const keptDocs = docs.filter((d) => Number(d.repo_id) === UPLOAD_REPO_ID || verdicts.get(Number(d.repo_id)) === true);
+    const found: Found[] = [
+      ...keptDocs.map((d) => ({
+        kind: "document" as const,
+        title: d.title,
+        source: `${d.repo_name}/${d.path}`,
+        repo: d.repo_name,
+        body: d.body,
+        snippet: d.snippet,
+        rank: Number(d.rank),
+      })),
+      ...entries.map((e) => ({ kind: e.kind, title: e.name, source: `brain/${e.kind}/${e.name}`, repo: null, body: e.body, snippet: e.snippet, rank: Number(e.rank) })),
+    ];
+    return found.sort((x, y) => y.rank - x.rank).slice(0, capped);
+  }
+
+
+
+  async function sources(ownerUid: number): Promise<Array<{ repoName: string; documents: number; indexedAt: number }>> {
+    return rows<{ repoName: string; documents: number; indexedAt: number }>(
+      `SELECT repo_name AS "repoName", COUNT(*)::int AS documents, MAX(indexed_at) AS "indexedAt" FROM documents WHERE owner_uid = $1 GROUP BY repo_name ORDER BY MAX(indexed_at) DESC`,
+      [ownerUid],
+    );
+  }
+
+  async function replaceRepo(ownerUid: number, repo: { repoId: number; repoName: string }, docs: Array<{ path: string; title: string; body: string }>): Promise<number> {
+    return transaction(async (tx) => {
+      await lock(tx, `documents:${ownerUid}`);
+      await tx.query(`DELETE FROM documents WHERE owner_uid = $1 AND repo_id = $2`, [ownerUid, repo.repoId]);
+      const held = await count(tx, `SELECT COUNT(*) AS n FROM documents WHERE owner_uid = $1`, [ownerUid]);
+      const at = now();
+      let stored = 0;
+      for (const d of docs) {
+        if (held + stored >= MAX_DOCS_PER_USER) break;
+        const title = cleanLine(d.title, 200);
+        const body = cleanText(d.body, MAX_DOC_BODY);
+        const path = cleanLine(d.path, 400);
+        if (!title || !path || !body.trim()) continue;
+        await tx.query(
+          `INSERT INTO documents (id, owner_uid, repo_id, repo_name, path, title, body, indexed_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+           ON CONFLICT (owner_uid, repo_id, path) DO UPDATE SET title = EXCLUDED.title, body = EXCLUDED.body, indexed_at = EXCLUDED.indexed_at`,
+          [randomUUID(), ownerUid, repo.repoId, repo.repoName, path, title, body, at],
+        );
+        stored += 1;
+      }
+      return stored;
+    });
+  }
+
+  async function putUpload(ownerUid: number, name: string, title: string, body: string): Promise<boolean> {
+    return putDocument({ ownerUid, repoId: UPLOAD_REPO_ID, repoName: UPLOAD_REPO_NAME, path: cleanLine(name, MAX_UPLOAD_NAME), title, body });
+  }
+
+  async function listUploads(ownerUid: number): Promise<Array<{ name: string; title: string; size: number; indexedAt: number }>> {
+    return rows<{ name: string; title: string; size: number; indexedAt: number }>(
+      `SELECT path AS name, title, length(body) AS size, indexed_at AS "indexedAt" FROM documents WHERE owner_uid = $1 AND repo_id = ${UPLOAD_REPO_ID} ORDER BY indexed_at DESC LIMIT 200`,
+      [ownerUid],
+    );
+  }
+
+  async function listGateways(ownerUid: number): Promise<Array<{ name: string; url: string; hasToken: boolean; createdAt: number }>> {
+    return rows(
+      `SELECT name, url, token_sealed IS NOT NULL AS "hasToken", created_at AS "createdAt" FROM gateway_servers WHERE owner_uid = $1 ORDER BY name`,
+      [ownerUid],
+    );
+  }
+
+  async function gateway(ownerUid: number, name: string): Promise<{ name: string; url: string; tokenSealed: string | null } | undefined> {
+    return first(`SELECT name, url, token_sealed AS "tokenSealed" FROM gateway_servers WHERE owner_uid = $1 AND name = $2`, [ownerUid, name]);
+  }
+
+  async function putGateway(ownerUid: number, g: { name: string; url: string; tokenSealed: string | null }, max: number): Promise<boolean> {
+    return transaction(async (tx) => {
+      await lock(tx, `gateways:${ownerUid}`);
+      const held = await count(tx, `SELECT COUNT(*) AS n FROM gateway_servers WHERE owner_uid = $1 AND name <> $2`, [ownerUid, g.name]);
+      if (held >= max) return false;
+      await tx.query(
+        `INSERT INTO gateway_servers (owner_uid, name, url, token_sealed, created_at) VALUES ($1, $2, $3, $4, $5)
+         ON CONFLICT (owner_uid, name) DO UPDATE SET url = EXCLUDED.url, token_sealed = EXCLUDED.token_sealed`,
+        [ownerUid, g.name, g.url, g.tokenSealed, now()],
+      );
+      return true;
+    });
+  }
+
+  async function deleteGateway(ownerUid: number, name: string): Promise<boolean> {
+    return (await changed(`DELETE FROM gateway_servers WHERE owner_uid = $1 AND name = $2`, [ownerUid, name])) > 0;
+  }
+
+  async function deleteUpload(ownerUid: number, name: string): Promise<boolean> {
+    return (await changed(`DELETE FROM documents WHERE owner_uid = $1 AND repo_id = ${UPLOAD_REPO_ID} AND path = $2`, [ownerUid, cleanLine(name, MAX_UPLOAD_NAME)])) > 0;
+  }
+
+  async function staleSources(before: number, limit: number): Promise<Array<{ ownerUid: number; repoId: number; repoName: string; indexedAt: number }>> {
+    return rows<{ ownerUid: number; repoId: number; repoName: string; indexedAt: number }>(
+      `SELECT owner_uid AS "ownerUid", repo_id AS "repoId", MAX(repo_name) AS "repoName", MAX(indexed_at) AS "indexedAt"
+       FROM documents WHERE repo_id <> ${UPLOAD_REPO_ID} GROUP BY owner_uid, repo_id
+       HAVING MAX(COALESCE(checked_at, indexed_at)) < $1 ORDER BY MAX(COALESCE(checked_at, indexed_at)) ASC LIMIT $2`,
+      [before, Math.min(Math.max(limit, 1), 200)],
+    );
+  }
+
+  async function deferRepo(ownerUid: number, repoId: number): Promise<void> {
+    await changed(`UPDATE documents SET checked_at = $3 WHERE owner_uid = $1 AND repo_id = $2`, [ownerUid, repoId, now()]);
+  }
+
+  async function clearRepo(ownerUid: number, repoId: number): Promise<number> {
+    return changed(`DELETE FROM documents WHERE owner_uid = $1 AND repo_id = $2`, [ownerUid, repoId]);
+  }
+
+
+
   async function purge(): Promise<{ posts: number; tokens: number }> {
     const t = now();
     const cutoff = t - RETAIN_EXPIRED_MS;
     let posts = await changed(`DELETE FROM posts WHERE type = 'claim' AND (released_at < $1 OR (released_at IS NULL AND expires_at < $1))`, [cutoff]);
-    posts += await changed(`DELETE FROM posts WHERE type IN ('finding', 'handoff') AND created_at < $1`, [t - RETAIN_POSTS_MS]);
+    posts += await changed(`DELETE FROM posts WHERE (type IN ('finding', 'handoff') OR (type = 'decision' AND closed_at IS NOT NULL)) AND created_at < $1`, [t - RETAIN_POSTS_MS]);
     posts += await changed(
       `DELETE FROM posts WHERE id IN (
          SELECT id FROM (
            SELECT id, ROW_NUMBER() OVER (PARTITION BY repo_id ORDER BY created_at DESC, id DESC) AS rank
-           FROM posts WHERE type IN ('finding', 'handoff')
+           FROM posts WHERE type IN ('finding', 'handoff') OR (type = 'decision' AND closed_at IS NOT NULL)
          ) ranked WHERE rank > $1
        )`,
       [MAX_POSTS_PER_REPO],
@@ -717,6 +1402,27 @@ export function openStore(db: Database, now: () => number = Date.now) {
   }
 
   return {
+    putDocument,
+    search,
+    sources,
+    clearRepo,
+    deferRepo,
+    replaceRepo,
+    staleSources,
+    putUpload,
+    listUploads,
+    deleteUpload,
+    listGateways,
+    gateway,
+    putGateway,
+    deleteGateway,
+    putEntry,
+    connections,
+    graph,
+    graphView,
+    listEntries,
+    getEntry,
+    deleteEntry,
     addPost,
     readBoard,
     getPost,
@@ -724,6 +1430,12 @@ export function openStore(db: Database, now: () => number = Date.now) {
     hasTask,
     closePost,
     events,
+    advanceWork,
+    workUpdates,
+    requestsBy,
+    changesRequestedFor,
+    openDecisions,
+    answeredDecisions,
     timeline,
     inbox,
     audit,

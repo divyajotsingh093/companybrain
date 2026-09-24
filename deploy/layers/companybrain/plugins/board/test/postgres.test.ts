@@ -4,15 +4,16 @@ import test from "node:test";
 import type pg from "pg";
 import { createAuth } from "../src/auth.ts";
 import { createPool, postgres } from "../src/db.ts";
-import { openStore, type Store } from "../src/store.ts";
+import { MAX_ENTRIES_PER_KIND, openStore, type Store } from "../src/store.ts";
 import { counters, fakeGitHub, testConfig } from "./fixtures.ts";
 
 const url = process.env.TEST_DATABASE_URL;
 const schema = `board_test_${randomBytes(6).toString("hex")}`;
 const pools: pg.Pool[] = [];
+const CONNECT_MS = 30_000;
 
 function instance(now: () => number = Date.now): Store {
-  const pool = createPool(url as string);
+  const pool = createPool(url as string, CONNECT_MS);
   pool.on("connect", (client) => {
     client.query(`SET search_path TO ${schema}`).catch(() => undefined);
   });
@@ -21,7 +22,7 @@ function instance(now: () => number = Date.now): Store {
 }
 
 test("real Postgres: locks hold across separate connection pools", { skip: !url && "set TEST_DATABASE_URL to run" }, async (t) => {
-  const admin = createPool(url as string);
+  const admin = createPool(url as string, CONNECT_MS);
   await admin.query(`CREATE SCHEMA ${schema}`);
   t.after(async () => {
     await Promise.all(pools.map((p) => p.end()));
@@ -29,10 +30,13 @@ test("real Postgres: locks hold across separate connection pools", { skip: !url 
     await admin.end();
   });
   const stores = [instance(), instance(), instance(), instance()];
+  const warm = () => Promise.all(stores.flatMap((s) => [s.hasTask(0, "warm"), s.hasTask(0, "warm")]));
   await stores[0]?.hasTask(0, "warm");
+  await warm();
 
   await t.test("one claimant per target", async () => {
     for (let round = 0; round < 3; round++) {
+      await warm();
       const results = await Promise.all(
         stores.map((store, i) =>
           store.addPost({ repoId: 1, repoName: "race/check", type: "claim", title: "r", body: "", target: `t${round}`, authorLogin: `u${i}`, authorUid: 100 + i, client: "codex" }),
@@ -46,8 +50,23 @@ test("real Postgres: locks hold across separate connection pools", { skip: !url 
     const at = Date.now();
     const token = (i: number) => ({ id: `tok-${i}`, hash: `hash-${i}`, uid: 500, kind: "agent" as const, client: "codex", createdAt: at, expiresAt: at + 600_000 });
     for (let i = 0; i < 18; i++) assert.equal(await (stores[0] as Store).insertToken(token(i)), true);
+    await warm();
     const results = await Promise.all(Array.from({ length: 8 }, (_, i) => (stores[i % stores.length] as Store).insertToken(token(18 + i))));
     assert.equal(results.filter(Boolean).length, 2);
+  });
+
+  await t.test("the brain entry cap is atomic across instances", async () => {
+    const at = Date.now();
+    await admin.query(
+      `INSERT INTO ${schema}.entries (id, kind, owner_uid, name, body, created_at, updated_at)
+       SELECT gen_random_uuid()::text, 'memory', 600, 'seed-' || g, 'x', $1, $1 FROM generate_series(1, $2) AS g`,
+      [at, MAX_ENTRIES_PER_KIND - 2],
+    );
+    await warm();
+    const raced = await Promise.all(
+      Array.from({ length: 8 }, (_, i) => (stores[i % stores.length] as Store).putEntry({ kind: "memory", ownerUid: 600, name: `race-${i}`, body: "x" })),
+    );
+    assert.equal(raced.filter((r) => r.ok).length, 2, "exactly the two remaining slots are filled, never more");
   });
 
   await t.test("a user's GitHub token is refreshed once across instances", async () => {
@@ -55,6 +74,7 @@ test("real Postgres: locks hold across separate connection pools", { skip: !url 
     const auths = stores.map((store) => createAuth({ config, store, fetch: fakeGitHub }));
     await auths[0]?.saveGrant(700, "alice", { accessToken: "gh-alice", expiresAt: Date.now() - 1, refreshToken: "refresh-1", refreshExpiresAt: Date.now() + 86_400_000 });
     counters.refreshes = 0;
+    await warm();
     const tokens = await Promise.all(auths.map((auth) => auth.githubToken(700)));
     assert.deepEqual(tokens, ["gh-alice", "gh-alice", "gh-alice", "gh-alice"]);
     assert.equal(counters.refreshes, 1);
@@ -66,6 +86,7 @@ test("real Postgres: locks hold across separate connection pools", { skip: !url 
       const base = { repoId: 2, repoName: "race/renew", type: "claim" as const, title: "r", body: "", target, authorLogin: "u", authorUid: 900, client: "codex" };
       const first = await (stores[0] as Store).addPost(base);
       assert.ok(first.ok);
+      await warm();
       const [renewal] = await Promise.all([(stores[1] as Store).addPost(base), (stores[2] as Store).releaseClaim(first.post.id, 2, { uid: 901, login: "m", client: "cursor" })]);
       assert.ok(renewal.ok);
       assert.equal(renewal.post.releasedAt, null, `round ${round}`);

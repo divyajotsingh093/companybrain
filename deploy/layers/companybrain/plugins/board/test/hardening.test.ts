@@ -224,3 +224,14 @@ test("audit history is capped per user and expires after 30 days", async () => {
   assert.equal((await store.auditTrail(1, 5_000)).length + (await store.auditTrail(2)).length, 0);
   await store.close();
 });
+
+test("a deployment can point at its own database without touching the shared one", () => {
+  const base = { BOARD_SECRET: "x".repeat(40), PUBLIC_URL: "https://board.example" };
+  assert.equal(loadConfig({ ...base, DATABASE_URL: "postgres://shared" }).databaseUrl, "postgres://shared", "production keeps using the shared variable");
+  assert.equal(
+    loadConfig({ ...base, DATABASE_URL: "postgres://shared", BOARD_DATABASE_URL: "postgres://staging" }).databaseUrl,
+    "postgres://staging",
+    "a staging deployment that sets its own URL uses it instead",
+  );
+  assert.equal(loadConfig({ ...base, BOARD_DATABASE_URL: "", DATABASE_URL: "postgres://shared" }).databaseUrl, "postgres://shared", "an empty override is ignored");
+});

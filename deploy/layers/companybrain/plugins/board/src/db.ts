@@ -15,12 +15,12 @@ const INT8_OID = 20;
 
 const logConnectionError = (err: Error) => console.error(`board database connection error: ${err.name}`);
 
-export function createPool(connectionString: string): pg.Pool {
+export function createPool(connectionString: string, connectionTimeoutMillis = 5_000): pg.Pool {
   const pool = new pg.Pool({
     connectionString,
     max: 5,
     idleTimeoutMillis: 5_000,
-    connectionTimeoutMillis: 5_000,
+    connectionTimeoutMillis,
     types: {
       getTypeParser: (oid: number, format?: string) =>
         oid === INT8_OID ? (value: string) => Number(value) : pg.types.getTypeParser(oid, format as "text"),

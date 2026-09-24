@@ -19,82 +19,126 @@ export function isErrorCode(value: string | undefined): value is ErrorCode {
 }
 
 const STYLE = `
-  :root { color-scheme:dark; --bg:#0b1120; --panel:#111a2e; --panel-2:#172238; --line:#26324a; --ink:#f1f5f9; --muted:#94a3b8;
-          --accent:#22c55e; --accent-ink:#052e16; --warn:#f59e0b; --info:#38bdf8; --danger:#f87171;
-          --mono:ui-monospace,"JetBrains Mono","SF Mono",Menlo,Consolas,monospace;
-          --sans:"IBM Plex Sans",ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif; }
+  :root { color-scheme:dark; --bg:#1a1a1a; --panel:#222222; --panel-2:#2a2a2a; --line:#333333; --line-strong:#4a4a4a;
+          --ink:#ececec; --muted:#a3a3a3; --accent:#60a5fa; --accent-hover:#93c5fd; --accent-ink:#0b1626; --accent-bg:rgba(96,165,250,.12);
+          --warn:#fbbf24; --info:#2dd4bf; --danger:#f87171; --r-sm:8px; --r:12px; --ease:cubic-bezier(.23,1,.32,1);
+          --mono:"Geist Mono",ui-monospace,"SF Mono",Menlo,Consolas,monospace;
+          --sans:"Geist",ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,sans-serif; }
   * { box-sizing:border-box; }
-  body { margin:0; font:16px/1.6 var(--sans); color:var(--ink); background:var(--bg); min-height:100vh; }
-  a { color:var(--accent); }
+  body { margin:0; font:16px/1.6 var(--sans); color:var(--ink); background:var(--bg); min-height:100vh; -webkit-font-smoothing:antialiased; }
+  a { color:var(--accent); text-underline-offset:3px; }
   :focus-visible { outline:2px solid var(--accent); outline-offset:2px; border-radius:6px; }
-  header { border-bottom:1px solid var(--line); background:rgba(11,17,32,.92); position:sticky; top:0; z-index:1; }
-  .bar { max-width:1180px; margin:0 auto; padding:12px 24px; display:flex; align-items:center; gap:12px; }
-  .brand { display:flex; align-items:center; gap:10px; color:var(--ink); text-decoration:none; font:600 15px var(--mono); }
+  header { border-bottom:1px solid var(--line); background:rgba(26,26,26,.94); position:sticky; top:0; z-index:1; }
+  .bar { max-width:1080px; margin:0 auto; padding:10px 24px; display:flex; align-items:center; gap:10px; }
+  .brand { display:flex; align-items:center; gap:10px; min-height:44px; white-space:nowrap; color:var(--ink); text-decoration:none; font:600 15px var(--sans); }
   .brand svg { color:var(--accent); }
   .spacer { flex:1; }
-  main { max-width:1180px; margin:0 auto; padding:40px 24px 80px; }
+  main { max-width:1080px; margin:0 auto; padding:48px 24px 96px; }
   .narrow { max-width:760px; }
-  h1 { font:700 clamp(26px,4vw,38px)/1.2 var(--mono); letter-spacing:-.02em; margin:0 0 12px; text-wrap:balance; overflow-wrap:anywhere; }
-  h2 { font:600 15px var(--mono); text-transform:uppercase; letter-spacing:.08em; color:var(--muted); margin:40px 0 14px; }
-  h3 { font-size:16px; margin:0; }
+  .reading { max-width:880px; }
+  h1 { font:600 clamp(28px,4.4vw,40px)/1.15 var(--sans); letter-spacing:-.025em; margin:0 0 14px; text-wrap:balance; overflow-wrap:anywhere; }
+  h2 { font:600 20px/1.3 var(--sans); letter-spacing:-.01em; margin:56px 0 8px; }
+  h3 { font:600 16px/1.4 var(--sans); margin:0 0 6px; }
   p { margin:0 0 14px; }
-  .lede { font-size:18px; color:var(--muted); max-width:62ch; }
+  .lede { font-size:18px; color:var(--muted); max-width:62ch; text-wrap:pretty; }
+  .section-intro { color:var(--muted); max-width:64ch; margin-bottom:20px; }
   .muted { color:var(--muted); }
-  .small { font-size:13px; }
-  .eyebrow { font:600 12px var(--mono); letter-spacing:.1em; text-transform:uppercase; color:var(--accent); margin-bottom:10px; }
+  .small { font-size:14px; }
   code, pre { font-family:var(--mono); }
-  code { background:var(--panel-2); padding:1px 6px; border-radius:6px; font-size:.9em; }
-  pre { background:#060b16; border:1px solid var(--line); color:#e2e8f0; padding:16px; border-radius:10px; overflow-x:auto;
-        font-size:13px; line-height:1.55; white-space:pre-wrap; word-break:break-all; margin:0; }
+  code { background:var(--panel-2); padding:1px 6px; border-radius:6px; font-size:.88em; overflow-wrap:anywhere; }
+  pre { background:#121212; border:1px solid var(--line); color:#e5e5e5; padding:14px 16px; border-radius:var(--r-sm); overflow-x:auto;
+        font-size:13px; line-height:1.6; white-space:pre-wrap; overflow-wrap:anywhere; margin:8px 0 0; }
+  .prose-block { font:14px/1.6 var(--sans); }
   .button { display:inline-flex; align-items:center; justify-content:center; gap:8px; min-height:44px; padding:0 18px;
             background:var(--accent); color:var(--accent-ink); font:600 15px var(--sans); border:1px solid var(--accent);
-            border-radius:10px; text-decoration:none; cursor:pointer; transition:background-color .15s, border-color .15s, color .15s; }
-  .button:hover { background:#4ade80; border-color:#4ade80; }
-  .quiet { background:transparent; color:var(--ink); border-color:var(--line); }
-  .quiet:hover { background:var(--panel-2); border-color:var(--muted); }
+            border-radius:var(--r-sm); text-decoration:none; cursor:pointer; white-space:nowrap;
+            transition:background-color .15s var(--ease), border-color .15s var(--ease), color .15s var(--ease), transform .12s var(--ease); }
+  .button:active { transform:scale(.97); }
+  .quiet { background:transparent; color:var(--ink); border-color:var(--line-strong); }
   .danger { color:var(--danger); }
-  .danger:hover { border-color:var(--danger); background:rgba(248,113,113,.08); }
+  @media (hover:hover) {
+    .button:hover { background:var(--accent-hover); border-color:var(--accent-hover); }
+    .quiet:hover { background:var(--panel-2); border-color:var(--muted); }
+    .danger:hover { border-color:var(--danger); background:rgba(248,113,113,.08); }
+    .board-link:hover { border-color:var(--accent); background:var(--panel-2); }
+    .post summary:hover .title { color:var(--accent); }
+    .group > summary:hover { background:var(--panel-2); }
+  }
   .row { display:flex; gap:12px; align-items:center; flex-wrap:wrap; }
   form { margin:0; }
-  .panel { background:var(--panel); border:1px solid var(--line); border-radius:14px; padding:20px; }
-  .notice { border-left:3px solid var(--warn); background:rgba(245,158,11,.08); padding:12px 16px; border-radius:8px; margin:16px 0; }
+  .panel { background:var(--panel); border:1px solid var(--line); border-radius:var(--r); padding:20px; }
+  .notice { border-left:3px solid var(--warn); background:rgba(251,191,36,.08); padding:12px 16px; border-radius:var(--r-sm); margin:20px 0; }
   .notice.error { border-color:var(--danger); background:rgba(248,113,113,.08); }
-  .steps { list-style:none; padding:0; margin:36px 0 0; display:grid; gap:16px; grid-template-columns:repeat(auto-fit,minmax(220px,1fr)); counter-reset:step; }
-  .steps li { counter-increment:step; }
-  .steps li::before { content:counter(step,decimal-leading-zero); display:block; font:600 13px var(--mono); color:var(--accent); margin-bottom:8px; }
-  .app-cta { display:flex; align-items:center; justify-content:space-between; gap:16px; margin-bottom:20px; padding:18px 20px;
-             border:1px solid var(--accent); border-radius:var(--radius-lg); background:var(--panel); color:var(--ink);
-             text-decoration:none; transition:background-color .15s ease; }
-  .app-cta:hover { background:var(--panel-2); }
-  .app-cta-copy { display:grid; gap:4px; }
-  .app-cta-copy b { font-size:16px; }
-  .app-cta-copy span { color:var(--muted); font-size:14px; }
-  .app-cta-go { color:var(--accent); font-size:20px; }
-  .clients { display:grid; gap:14px; grid-template-columns:repeat(auto-fit,minmax(230px,1fr)); }
-  .client { display:flex; flex-direction:column; gap:12px; }
+  .hero { padding:24px 0 8px; }
+  .hero .row { margin-top:28px; }
+  .hint { color:var(--muted); font-size:14px; margin:0; }
+  .grid { display:grid; gap:14px; grid-template-columns:repeat(auto-fit,minmax(min(100%,240px),1fr)); list-style:none; padding:0; margin:0; }
+  .grid li p, .cap p { color:var(--muted); font-size:15px; margin:0; }
+  .how { list-style:none; padding:0; margin:0; display:grid; gap:14px; grid-template-columns:repeat(auto-fit,minmax(min(100%,220px),1fr)); counter-reset:how; }
+  .how li { counter-increment:how; border-top:1px solid var(--line-strong); padding-top:14px; }
+  .how li::before { content:counter(how); display:block; font:600 14px var(--mono); color:var(--accent); margin-bottom:6px; }
+  .how p { color:var(--muted); font-size:15px; margin:0; }
+  .trust { list-style:none; padding:0; margin:0; display:grid; gap:18px 24px; grid-template-columns:repeat(auto-fit,minmax(min(100%,240px),1fr)); }
+  .trust li { font-size:15px; color:var(--muted); }
+  .trust b { display:block; color:var(--ink); margin-bottom:2px; }
+  .journey { list-style:none; padding:0; margin:32px 0 0; display:grid; gap:0; }
+  .step { display:grid; grid-template-columns:36px minmax(0,1fr); gap:0 16px; position:relative; padding-bottom:32px; }
+  .step:not(:last-child)::after { content:""; position:absolute; left:17px; top:40px; bottom:4px; width:2px; background:var(--line); }
+  .marker { width:36px; height:36px; border-radius:50%; display:grid; place-items:center; border:1px solid var(--line-strong); background:var(--panel);
+            font:600 14px var(--mono); color:var(--muted); }
+  .step.done .marker { background:var(--accent); border-color:var(--accent); color:var(--accent-ink); }
+  .step[aria-current="step"] .marker { border-color:var(--accent); color:var(--accent); box-shadow:0 0 0 4px var(--accent-bg); }
+  .step-body { min-width:0; padding-top:5px; }
+  .step-body > h2 { margin:0 0 6px; display:flex; align-items:center; gap:10px; flex-wrap:wrap; }
+  .step-body > p { color:var(--muted); max-width:64ch; }
+  .status { font:600 12px var(--mono); padding:2px 8px; border-radius:999px; border:1px solid var(--line-strong); color:var(--muted); }
+  .status.on { border-color:var(--accent); color:var(--accent); }
+  .agents { list-style:none; padding:0; margin:0 0 16px; display:flex; flex-wrap:wrap; gap:8px; }
+  .agents li { font-size:14px; padding:6px 12px; border-radius:999px; background:var(--panel); border:1px solid var(--line); }
+  .agents b { font-weight:600; }
+  .clients { display:grid; gap:12px; grid-template-columns:repeat(2,minmax(0,1fr)); }
+  @media (max-width:560px) { .clients { grid-template-columns:1fr; } }
+  .client { display:flex; flex-direction:column; gap:10px; padding:16px; }
+  .client h3 { margin:0; }
   .client p { font-size:14px; color:var(--muted); flex:1; margin:0; }
-  .client .button { width:100%; }
-  .table-wrap { overflow-x:auto; border:1px solid var(--line); border-radius:12px; }
-  table { width:100%; border-collapse:collapse; font-size:14px; min-width:560px; }
-  th { font:600 12px var(--mono); text-transform:uppercase; letter-spacing:.06em; color:var(--muted); background:var(--panel); }
-  td, th { text-align:left; padding:10px 14px; border-bottom:1px solid var(--line); vertical-align:middle; }
+  .client .button { width:100%; white-space:normal; text-align:center; }
+  .caps { display:grid; gap:14px; grid-template-columns:repeat(auto-fit,minmax(min(100%,300px),1fr)); }
+  .cap { display:flex; flex-direction:column; gap:10px; }
+  .cap h3 { margin:0; }
+  .tools { display:flex; flex-wrap:wrap; gap:6px; margin-top:auto; padding-top:4px; }
+  .tool { font-size:12px; color:var(--muted); background:var(--panel-2); }
+  .tip { margin-top:16px; }
+  .table-wrap { border:1px solid var(--line); border-radius:var(--r); overflow:hidden; }
+  table { width:100%; border-collapse:collapse; font-size:14px; }
+  th { font:600 12px var(--sans); color:var(--muted); background:var(--panel); }
+  td, th { text-align:left; padding:10px 14px; border-bottom:1px solid var(--line); vertical-align:middle; overflow-wrap:anywhere; }
   tr:last-child td { border-bottom:0; }
+  @media (max-width:640px) {
+    table, thead, tbody, tr, td { display:block; }
+    thead { position:absolute; width:1px; height:1px; overflow:hidden; clip:rect(0 0 0 0); }
+    tr { padding:10px 14px; border-bottom:1px solid var(--line); }
+    tr:last-child { border-bottom:0; }
+    td { border:0; padding:3px 0; display:flex; gap:12px; }
+    td::before { content:attr(data-label); flex:0 0 96px; color:var(--muted); font-size:13px; }
+  }
   label { display:block; font-weight:600; font-size:14px; margin-bottom:6px; }
-  input[type=text] { min-height:44px; flex:1; min-width:220px; padding:0 14px; border-radius:10px; border:1px solid var(--line);
-                     background:#060b16; color:var(--ink); font:15px var(--mono); }
+  input[type=text] { min-height:44px; flex:1; min-width:0; width:100%; padding:0 14px; border-radius:var(--r-sm); border:1px solid var(--line-strong);
+                     background:#121212; color:var(--ink); font:15px var(--mono); }
+  .field { display:flex; gap:10px; flex-wrap:wrap; }
+  .field input { flex:1 1 220px; }
   .stats { display:flex; gap:10px; flex-wrap:wrap; margin:20px 0 0; }
-  .stat { font:600 13px var(--mono); padding:6px 12px; border-radius:999px; border:1px solid var(--line); background:var(--panel); }
-  .stat b { color:var(--ink); } .stat { color:var(--muted); }
+  .stat { font:600 13px var(--mono); padding:6px 12px; border-radius:999px; border:1px solid var(--line); background:var(--panel); color:var(--muted); }
+  .stat b { color:var(--ink); }
   .columns { display:grid; gap:18px; grid-template-columns:repeat(3,minmax(0,1fr)); margin-top:28px; align-items:start; }
   @media (max-width:980px) { .columns { grid-template-columns:1fr; } }
-  .column { background:var(--panel); border:1px solid var(--line); border-radius:14px; padding:14px; }
-  .column > h2 { margin:4px 6px 14px; display:flex; justify-content:space-between; }
-  .post { background:var(--panel-2); border:1px solid var(--line); border-radius:10px; padding:12px 14px; margin-top:10px; }
+  .column { background:var(--panel); border:1px solid var(--line); border-radius:var(--r); padding:14px; max-height:calc(100vh - 220px); overflow-y:auto; }
+  @media (max-width:980px) { .column { max-height:none; } }
+  .column > h2 { margin:4px 6px 14px; display:flex; justify-content:space-between; font-size:15px; color:var(--muted); }
+  .post { background:var(--panel-2); border:1px solid var(--line); border-radius:var(--r-sm); padding:12px 14px; margin-top:10px; }
   .post:first-of-type { margin-top:0; }
   .post summary { cursor:pointer; list-style:none; }
   .post summary::-webkit-details-marker { display:none; }
-  .post summary:hover .title { color:var(--accent); }
-  .title { font-weight:600; font-size:15px; line-height:1.4; transition:color .15s; overflow-wrap:anywhere; }
+  .title { font-weight:600; font-size:15px; line-height:1.4; transition:color .15s var(--ease); overflow-wrap:anywhere; }
   .meta { display:block; font-size:12.5px; color:var(--muted); margin-top:6px; font-family:var(--mono); overflow-wrap:anywhere; }
   .body { white-space:pre-wrap; font-size:14px; margin-top:10px; padding-top:10px; border-top:1px solid var(--line); overflow-wrap:anywhere; }
   .tag { display:inline-block; font:600 11px var(--mono); text-transform:uppercase; letter-spacing:.06em; padding:2px 8px;
@@ -108,50 +152,59 @@ const STYLE = `
   .lane { font:600 12px var(--mono); padding:2px 8px; border-radius:6px; border:1px solid var(--line); justify-self:start; color:var(--muted); }
   .lane.claude_code { color:#fb923c; } .lane.codex { color:var(--info); } .lane.cursor { color:#c084fc; } .lane.grok { color:var(--accent); }
   @media (max-width:640px) { .timeline li { grid-template-columns:1fr; gap:4px; } }
-  .skip { position:absolute; left:16px; top:-60px; z-index:2; background:var(--accent); color:var(--accent-ink); padding:10px 16px; border-radius:8px; font-weight:600; text-decoration:none; }
+  .skip { position:absolute; left:16px; top:-60px; z-index:2; background:var(--accent); color:var(--accent-ink); padding:10px 16px; border-radius:var(--r-sm); font-weight:600; text-decoration:none; }
   .skip:focus { top:12px; }
   main:focus { outline:none; }
-  .boards { list-style:none; padding:0; margin:0 0 14px; display:grid; gap:10px; grid-template-columns:repeat(auto-fill,minmax(280px,1fr)); }
-  .board-link { display:block; min-height:52px; padding:12px 16px; text-decoration:none; color:var(--ink); font-family:var(--mono); font-size:14px; overflow-wrap:anywhere; transition:border-color .15s, background-color .15s; }
-  .board-link:hover { border-color:var(--accent); background:var(--panel-2); }
-  .setup { counter-reset:step; list-style:none; padding:0; margin:20px 0; display:grid; gap:18px; }
-  .setup li { counter-increment:step; display:grid; grid-template-columns:32px minmax(0,1fr); gap:6px 12px; align-items:start; }
-  .setup li::before { content:counter(step); grid-row:span 2; width:28px; height:28px; border-radius:50%; display:grid; place-items:center; background:var(--panel-2); border:1px solid var(--line); font:600 13px var(--mono); color:var(--accent); }
-  .setup li > span { padding-top:3px; }
+  .boards { list-style:none; padding:0; margin:0 0 14px; display:grid; gap:10px; grid-template-columns:repeat(auto-fill,minmax(min(100%,260px),1fr)); }
+  .board-link { display:block; min-height:52px; padding:12px 16px; text-decoration:none; color:var(--ink); font-family:var(--mono); font-size:14px; overflow-wrap:anywhere; transition:border-color .15s var(--ease), background-color .15s var(--ease); }
+  .setup { counter-reset:step; list-style:none; padding:0; margin:28px 0; display:grid; gap:28px; }
+  .setup > li { counter-increment:step; display:grid; grid-template-columns:32px minmax(0,1fr); gap:0 14px; align-items:start; }
+  .setup > li::before { content:counter(step); width:32px; height:32px; border-radius:50%; display:grid; place-items:center; background:var(--panel); border:1px solid var(--line-strong); font:600 13px var(--mono); color:var(--accent); }
+  .setup > li > div { min-width:0; padding-top:3px; }
+  .setup h2 { margin:0 0 4px; font-size:17px; }
+  .setup p { color:var(--muted); margin:0; }
+  .block { margin-top:12px; }
+  .block-label { font:600 13px var(--sans); color:var(--ink); margin:0; }
   .select-all { user-select:all; -webkit-user-select:all; cursor:text; }
   .ttl { display:block; height:4px; border-radius:999px; background:var(--line); margin-top:10px; overflow:hidden; }
   .ttl > span { display:block; height:100%; background:var(--warn); }
   .group { margin-top:10px; }
   .group:first-of-type { margin-top:0; }
-  .group > summary { cursor:pointer; list-style:none; display:flex; justify-content:space-between; align-items:center; min-height:44px; padding:0 8px; border-radius:8px; font:600 13px var(--mono); color:var(--ink); }
+  .group > summary { cursor:pointer; list-style:none; display:flex; justify-content:space-between; align-items:center; min-height:44px; padding:0 8px; border-radius:var(--r-sm); font:600 13px var(--mono); color:var(--ink); }
   .group > summary::-webkit-details-marker { display:none; }
-  .group > summary::before { content:"▸"; color:var(--muted); margin-right:8px; transition:transform .15s; }
+  .group > summary::before { content:"\\25B8"; color:var(--muted); margin-right:8px; transition:transform .15s var(--ease); }
   .group[open] > summary::before { transform:rotate(90deg); }
   .group > summary > span:first-child { flex:1; }
-  .group > summary:hover { background:var(--panel-2); }
   .count { font:600 12px var(--mono); color:var(--muted); }
-  .column { max-height:calc(100vh - 220px); overflow-y:auto; }
-  @media (max-width:980px) { .column { max-height:none; } }
-  .trust { list-style:none; padding:0; margin:0; display:grid; gap:12px; grid-template-columns:repeat(auto-fit,minmax(240px,1fr)); }
-  .trust li { font-size:14px; color:var(--muted); border-left:2px solid var(--accent); padding:4px 0 4px 14px; }
-  .trust b { display:block; color:var(--ink); margin-bottom:2px; }
-  .empty { color:var(--muted); font-size:14px; padding:16px 6px; }
+  .empty { color:var(--muted); font-size:15px; padding:16px 6px; }
+  p.empty.panel { padding:18px 20px; margin:0; }
+  .danger-zone { display:flex; gap:16px; align-items:center; flex-wrap:wrap; border-color:rgba(248,113,113,.35); }
+  .danger-zone p { margin:0; flex:1 1 260px; color:var(--muted); font-size:14px; }
   .center { min-height:60vh; display:grid; place-items:center; text-align:center; }
   .center .panel { max-width:520px; padding:32px; }
+  .center h1 { font-size:28px; }
+  @media (max-width:640px) {
+    .bar { padding:8px 16px; gap:8px; }
+    .bar .button { padding:0 12px; font-size:14px; }
+    main { padding:32px 16px 72px; }
+    h2 { margin-top:44px; }
+  }
+  @media (max-width:420px) { .brand-name { position:absolute; width:1px; height:1px; overflow:hidden; clip:rect(0 0 0 0); white-space:nowrap; } }
   @media (prefers-reduced-motion: reduce) { * { transition:none !important; } }
 `;
 
 const LOGO = `<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="6" cy="6" r="2.5"/><circle cx="18" cy="6" r="2.5"/><circle cx="12" cy="18" r="2.5"/><path d="M8.2 7.2 10.8 15.8M15.8 7.2 13.2 15.8M8.5 6h7"/></svg>`;
 const GITHUB = `<svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 .5a11.5 11.5 0 0 0-3.64 22.41c.58.1.79-.25.79-.56v-2c-3.2.7-3.88-1.37-3.88-1.37-.52-1.33-1.28-1.69-1.28-1.69-1.04-.71.08-.7.08-.7 1.15.08 1.76 1.19 1.76 1.19 1.03 1.76 2.69 1.25 3.35.96.1-.75.4-1.25.73-1.54-2.55-.29-5.24-1.28-5.24-5.69 0-1.26.45-2.28 1.19-3.09-.12-.29-.52-1.46.11-3.05 0 0 .97-.31 3.17 1.18a11 11 0 0 1 5.78 0c2.2-1.49 3.17-1.18 3.17-1.18.63 1.59.23 2.76.11 3.05.74.81 1.19 1.83 1.19 3.09 0 4.42-2.69 5.4-5.25 5.68.41.36.78 1.06.78 2.14v3.17c0 .31.21.67.8.56A11.5 11.5 0 0 0 12 .5Z"/></svg>`;
+const CHECK = `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12.5 10 17.5 19 7"/></svg>`;
 
-function page(title: string, content: string, opts: { signedIn?: boolean; narrow?: boolean } = {}): string {
+function page(title: string, content: string, opts: { signedIn?: boolean; width?: "narrow" | "reading" } = {}): string {
   const nav = opts.signedIn
     ? `<a class="button quiet" href="/app">Open the app</a><form method="post" action="/auth/logout"><button class="button quiet" type="submit">Sign out</button></form>`
     : "";
   return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>${escapeHtml(title)}</title><style>${STYLE}</style></head>
-<body><a class="skip" href="#main">Skip to content</a><header><div class="bar"><a class="brand" href="/">${LOGO}<span>companybrain<span class="muted">/board</span></span></a><span class="spacer"></span>${nav}</div></header>
-<main id="main" tabindex="-1"${opts.narrow ? ' class="narrow"' : ""}>${content}</main></body></html>`;
+<body><a class="skip" href="#main">Skip to content</a><header><div class="bar"><a class="brand" href="/">${LOGO}<span class="brand-name">Company Brain</span></a><span class="spacer"></span>${nav}</div></header>
+<main id="main" tabindex="-1"${opts.width ? ` class="${opts.width}"` : ""}>${content}</main></body></html>`;
 }
 
 const CLIENT_LABELS: Record<AgentClient, string> = {
@@ -162,48 +215,126 @@ const CLIENT_LABELS: Record<AgentClient, string> = {
 };
 
 const CLIENT_NOTES: Record<AgentClient, string> = {
-  claude_code: "One command: claude mcp add over streamable HTTP.",
-  codex: "A config.toml entry plus a token in the environment.",
-  cursor: "An mcp.json entry with a bearer header.",
+  claude_code: "One terminal command.",
+  codex: "A config.toml entry and one environment variable.",
+  cursor: "An mcp.json entry.",
   grok: "A remote MCP tool for the xAI Responses API.",
 };
 
-export function connectionSnippet(client: AgentClient, mcpUrl: string, token: string): string {
+const clientLabel = (client: string): string => escapeHtml(CLIENT_LABELS[client as AgentClient] ?? client);
+
+interface SetupBlock {
+  label: string;
+  code: string;
+}
+
+function connectionSetup(client: AgentClient, mcpUrl: string, token: string): { blocks: SetupBlock[]; then: string } {
   switch (client) {
     case "claude_code":
-      return `claude mcp add --transport http companybrain ${mcpUrl} --header "Authorization: Bearer ${token}"`;
+      return {
+        blocks: [{ label: "Run in a terminal", code: `claude mcp add --transport http companybrain ${mcpUrl} --header "Authorization: Bearer ${token}"` }],
+        then: "Start a new Claude Code session so it picks up the server.",
+      };
     case "codex":
-      return `# ~/.codex/config.toml\n[mcp_servers.companybrain]\nurl = "${mcpUrl}"\nbearer_token_env_var = "COMPANYBRAIN_TOKEN"\n\n# in the environment that runs codex\nexport COMPANYBRAIN_TOKEN="${token}"`;
+      return {
+        blocks: [
+          { label: "Add to ~/.codex/config.toml", code: `[mcp_servers.companybrain]\nurl = "${mcpUrl}"\nbearer_token_env_var = "COMPANYBRAIN_TOKEN"` },
+          { label: "Run in the shell that starts Codex", code: `export COMPANYBRAIN_TOKEN="${token}"` },
+        ],
+        then: "Start Codex from that same shell.",
+      };
     case "cursor":
-      return JSON.stringify({ mcpServers: { companybrain: { url: mcpUrl, headers: { Authorization: `Bearer ${token}` } } } }, null, 2);
+      return {
+        blocks: [
+          {
+            label: "Merge into .cursor/mcp.json in your project, or ~/.cursor/mcp.json for every project",
+            code: JSON.stringify({ mcpServers: { companybrain: { url: mcpUrl, headers: { Authorization: `Bearer ${token}` } } } }, null, 2),
+          },
+        ],
+        then: "Reload Cursor.",
+      };
     case "grok":
-      return JSON.stringify({ tools: [{ type: "mcp", server_url: mcpUrl, server_label: "companybrain", authorization: token }] }, null, 2);
+      return {
+        blocks: [
+          {
+            label: "Add to the tools of your xAI Responses API request",
+            code: JSON.stringify({ tools: [{ type: "mcp", server_url: mcpUrl, server_label: "companybrain", authorization: token }] }, null, 2),
+          },
+        ],
+        then: "Send the request. Grok calls the tools when it needs them.",
+      };
   }
 }
 
+const STANDING_PLACE: Record<AgentClient, string> = {
+  claude_code: "<code>CLAUDE.md</code>",
+  codex: "<code>AGENTS.md</code>",
+  cursor: "your Cursor rules",
+  grok: "the system prompt of your request",
+};
+
+const SESSION_START =
+  "At the start of every session, call board_inbox to see what is waiting for you, then brain_search for what you are about to work on. Claim work with board_post before you start it, and save what you learn with brain_write.";
+
+const CAPABILITIES: Array<{ title: string; text: string; tools: string[] }> = [
+  {
+    title: "Coordinate on a repository",
+    text: "Read the code through your GitHub access. Check the board for open tasks and claims, claim work before starting so no two agents do the same thing, post findings, hand work to another agent, and catch up on what changed.",
+    tools: ["board_read", "board_post", "board_release", "board_close", "board_events", "list_repos", "repo_overview", "get_file", "search_code"],
+  },
+  {
+    title: "Remember and search the company brain",
+    text: "Save projects, decisions, lessons and rules under a name so the next session still has them. Search everything indexed or recorded, and follow the links between entries.",
+    tools: ["brain_search", "brain_read", "brain_write", "brain_links", "brain_forget"],
+  },
+  {
+    title: "Ask you for a decision",
+    text: "When a call is yours to make, the agent asks and stops. The question waits in Decisions in the app, and your answer reaches the agent next session.",
+    tools: ["board_ask", "board_inbox"],
+  },
+  {
+    title: "Report work for review",
+    text: "Agents post progress on a task and submit it when it is ready, with how to check it. You accept it or ask for changes, and changes come back to the agent.",
+    tools: ["work_update", "board_inbox"],
+  },
+];
+
 export function renderHome(opts: { githubConfigured: boolean; error?: ErrorCode }): string {
   const action = opts.githubConfigured
-    ? `<a class="button" href="/auth/github/start">${GITHUB}Connect GitHub</a>`
-    : `<p class="muted">GitHub sign-in is not configured on this server yet.</p>`;
-  const error = opts.error ? `<div class="notice error" role="alert"><strong>Sign-in failed.</strong> ${escapeHtml(ERROR_MESSAGES[opts.error])}</div>` : "";
+    ? `<a class="button" href="/auth/github/start">${GITHUB}Sign in with GitHub</a><p class="hint">Read-only on GitHub. You choose the repositories.</p>`
+    : `<p class="notice">GitHub sign-in is not set up on this server yet, so nobody can sign in. Whoever runs this server needs to add the GitHub app settings.</p>`;
+  const error = opts.error
+    ? `<div class="notice error" role="alert"><strong>Sign-in failed.</strong> ${escapeHtml(ERROR_MESSAGES[opts.error])}</div>`
+    : "";
   return page(
-    "Company Brain board",
-    `<div class="eyebrow">Remote MCP for coding agents</div>
-<h1>One board where your agents share context and split the work</h1>
-<p class="lede">Claude Code, Codex, Cursor and Grok read your repositories through your own GitHub access, then claim tasks, record findings and hand off work on a board per repository.</p>
+    "Company Brain",
+    `<section class="hero">
+<h1>A shared memory for you, your company and your AI agents</h1>
+<p class="lede">Company Brain sits between you, what your company knows, and the AI agents working on it. Agents read your repositories, remember what they learn, and coordinate on one board, so nothing is lost between sessions and no two agents do the same work.</p>
 ${error}<div class="row">${action}</div>
-<ol class="steps">
-<li class="panel"><h3>Connect GitHub</h3><p class="muted small">Install the app on the repositories you choose. Read-only: contents and metadata.</p></li>
-<li class="panel"><h3>Create an agent token</h3><p class="muted small">One token per agent, shown once, expiring and revocable.</p></li>
-<li class="panel"><h3>Agents coordinate</h3><p class="muted small">Claims prevent duplicate work; findings and handoffs carry context between sessions.</p></li>
+</section>
+<h2>What you get</h2>
+<p class="section-intro">Works with Claude Code, Codex, Cursor and Grok.</p>
+<ul class="grid">
+<li class="panel"><h3>Answers from your own knowledge</h3><p>Ask a question and get an answer drawn from your repositories and the notes your agents keep.</p></li>
+<li class="panel"><h3>A map of how it connects</h3><p>A graph of projects, repositories, decisions and lessons, and the links between them.</p></li>
+<li class="panel"><h3>Agents that coordinate</h3><p>Agents claim work before they start and hand it on when they stop, instead of colliding.</p></li>
+<li class="panel"><h3>You make the calls</h3><p>Decisions an agent should not make alone, and work it finishes, wait for your review.</p></li>
+</ul>
+<h2>How to start</h2>
+<ol class="how">
+<li><h3>Sign in with GitHub</h3><p>Install the app on the repositories you choose.</p></li>
+<li><h3>Connect an agent</h3><p>Create a token and paste its setup into your agent.</p></li>
+<li><h3>Ask a question</h3><p>Index a repository in the app, then ask about it.</p></li>
 </ol>
-<h2>Built to be safe by default</h2>
+<h2>Safe by default</h2>
 <ul class="trust">
-<li><b>Your GitHub access, not ours.</b> Every read uses your own authorization. Nothing is indexed or shared.</li>
-<li><b>Read-only on GitHub.</b> Agents write only to the board, never to your repositories.</li>
+<li><b>Your GitHub access, not ours.</b> Every read uses your own authorization. Only repositories you index are stored for search, and only you and your agents can search them.</li>
+<li><b>Read-only on GitHub.</b> Agents write to the board and the brain, never to your repositories.</li>
 <li><b>Untrusted by default.</b> Repository content and other agents' posts reach agents marked as data, never as instructions.</li>
 <li><b>Tokens you control.</b> Stored as hashes, expiring, revocable, and every call is logged.</li>
 </ul>`,
+    { width: "reading" },
   );
 }
 
@@ -225,8 +356,56 @@ function stamp(ms: number | null, now: number): string {
 
 const TASK_TITLE = /^([A-Za-z0-9_-]+) #(\w+): (.+)$/;
 
-export function renderConnected(opts: { login: string; tokens: TokenRow[]; activity: AuditEntry[]; boards: string[]; now: number }): string {
+function step(n: number, state: "done" | "current" | "todo", title: string, status: string, body: string): string {
+  const marker = state === "done" ? CHECK : String(n);
+  return `<li class="step${state === "done" ? " done" : ""}"${state === "current" ? ' aria-current="step"' : ""}><span class="marker" aria-hidden="true">${marker}</span>
+<div class="step-body"><h2>${title} <span class="status${state === "todo" ? "" : " on"}">${status}</span></h2>${body}</div></li>`;
+}
+
+function knowledgeStep(indexed: boolean, agentConnected: boolean): { state: "done" | "current" | "todo"; status: string } {
+  if (indexed) return { state: "done", status: "Done" };
+  if (agentConnected) return { state: "current", status: "Next" };
+  return { state: "todo", status: "After step 2" };
+}
+
+export function renderConnected(opts: { login: string; tokens: TokenRow[]; activity: AuditEntry[]; boards: string[]; indexed: boolean; now: number }): string {
   const { now } = opts;
+  const lastUse = new Map<string, number | null>();
+  for (const t of opts.tokens) lastUse.set(t.client, Math.max(lastUse.get(t.client) ?? 0, t.lastUsedAt ?? 0) || null);
+  const agentConnected = [...lastUse.values()].some(Boolean);
+  const agents = lastUse.size
+    ? `<ul class="agents" aria-label="Your agents">${[...lastUse]
+        .map(([client, used]) => `<li><b>${clientLabel(client)}</b> <span class="muted">${used ? `last call ${stamp(used, now)}` : "waiting for its first call"}</span></li>`)
+        .join("")}</ul>`
+    : "";
+  const create = AGENT_CLIENTS.map(
+    (c) => `<form method="post" action="/tokens" class="panel client"><h3>${CLIENT_LABELS[c]}</h3><p>${CLIENT_NOTES[c]}</p>
+<input type="hidden" name="client" value="${c}"><button class="button${agentConnected ? " quiet" : ""}" type="submit">Create ${CLIENT_LABELS[c]} token</button></form>`,
+  ).join("");
+  const agentStatus = agentConnected ? "Done" : lastUse.size ? "Waiting for the agent" : "Next";
+  const agentIntro = agentConnected
+    ? "Your agent has connected. Add another the same way, one token per agent."
+    : lastUse.size
+      ? "A token exists, but no agent has used it yet. Paste its setup into the agent and start a session. Lost the setup? Create a new token."
+      : "Pick the agent you use. You get a token and a setup to paste into it. The token is shown once and reaches whatever your GitHub authorization for this app covers, so keep it out of shared channels and logs.";
+  const knowledge = knowledgeStep(opts.indexed, agentConnected);
+  const journey = `<ol class="journey">
+${step(1, "done", "Connect GitHub", "Done", `<p>Connected as ${escapeHtml(opts.login)}. Agents read only what both your GitHub account and this app can reach.</p>`)}
+${step(2, agentConnected ? "done" : "current", "Connect an agent", agentStatus, `<p>${agentIntro}</p>${agents}<div class="clients">${create}</div>`)}
+${step(
+  3,
+  knowledge.state,
+  "Add knowledge, then ask",
+  knowledge.status,
+  `<p>In the app, open Sources and index a repository or add a file. Then ask a question on the Ask screen. Decisions and work waiting for your review live there too.</p><a class="button${agentConnected || opts.indexed ? "" : " quiet"}" href="/app">Open the app</a>`,
+)}
+</ol>`;
+  const capabilities = `<h2>What your agents can do</h2>
+<p class="section-intro">Once connected, an agent gets these tools. Anything it reads from repositories or other agents reaches it as data, never as instructions.</p>
+<div class="caps">${CAPABILITIES.map(
+    (c) => `<section class="panel cap" aria-label="${c.title}"><h3>${c.title}</h3><p>${c.text}</p><div class="tools">${c.tools.map((t) => `<code class="tool">${t}</code>`).join("")}</div></section>`,
+  ).join("")}</div>
+<p class="muted small tip">Tell your agent to call <code class="tool">board_inbox</code> and <code class="tool">brain_search</code> at the start of every session.</p>`;
   const boards = opts.boards.length
     ? `<ul class="boards">${opts.boards
         .map((r) => {
@@ -235,72 +414,69 @@ export function renderConnected(opts: { login: string; tokens: TokenRow[]; activ
         })
         .join("")}</ul>`
     : "";
-  const create = AGENT_CLIENTS.map(
-    (c) => `<form method="post" action="/tokens" class="panel client"><h3>${CLIENT_LABELS[c]}</h3><p>${CLIENT_NOTES[c]}</p>
-<input type="hidden" name="client" value="${c}"><button class="button" type="submit">Create ${CLIENT_LABELS[c]} token</button></form>`,
-  ).join("");
   const rows = opts.tokens
     .map(
-      (t) => `<tr><td>${escapeHtml(CLIENT_LABELS[t.client as AgentClient] ?? t.client)}</td><td>${stamp(t.createdAt, now)}</td><td>${stamp(t.lastUsedAt, now)}</td><td>${stamp(t.expiresAt, now)}</td>
-<td><form method="post" action="/tokens/${escapeHtml(t.id)}/revoke"><button class="button quiet danger" type="submit" aria-label="Revoke ${escapeHtml(CLIENT_LABELS[t.client as AgentClient] ?? t.client)} token created ${when(t.createdAt)}">Revoke</button></form></td></tr>`,
+      (t) => `<tr><td data-label="Agent">${clientLabel(t.client)}</td><td data-label="Created">${stamp(t.createdAt, now)}</td><td data-label="Last used">${stamp(t.lastUsedAt, now)}</td><td data-label="Expires">${stamp(t.expiresAt, now)}</td>
+<td data-label="Action"><form method="post" action="/tokens/${escapeHtml(t.id)}/revoke"><button class="button quiet danger" type="submit" aria-label="Revoke ${clientLabel(t.client)} token created ${when(t.createdAt)}">Revoke</button></form></td></tr>`,
     )
     .join("");
   const table = rows
-    ? `<div class="table-wrap"><table><thead><tr><th>Agent</th><th>Created</th><th>Last used</th><th>Expires</th><th><span class="muted">Action</span></th></tr></thead><tbody>${rows}</tbody></table></div>`
-    : `<p class="empty panel">No agent tokens yet. Create one above, paste its setup into the agent, and it appears here.</p>`;
+    ? `<div class="table-wrap"><table><thead><tr><th>Agent</th><th>Created</th><th>Last used</th><th>Expires</th><th>Action</th></tr></thead><tbody>${rows}</tbody></table></div>`
+    : `<p class="empty panel">No agent tokens yet. Create one in step 2, paste its setup into the agent, and it appears here.</p>`;
+  const activity = opts.activity.length
+    ? `<div class="table-wrap"><table><thead><tr><th>When</th><th>Agent</th><th>Tool</th><th>Repository or post</th><th>Result</th></tr></thead><tbody>${opts.activity
+        .map(
+          (e) =>
+            `<tr><td data-label="When">${stamp(e.at, now)}</td><td data-label="Agent">${clientLabel(e.client)}</td><td data-label="Tool"><code>${escapeHtml(e.tool)}</code></td><td data-label="Subject">${e.subject ? escapeHtml(e.subject) : '<span class="muted">none</span>'}</td><td data-label="Result">${e.ok ? "ok" : '<span class="danger">error</span>'}</td></tr>`,
+        )
+        .join("")}</tbody></table></div>`
+    : `<p class="empty panel">No agent tool calls yet. Once an agent connects, every call it makes shows up here.</p>`;
   return page(
-    "Connected · Company Brain board",
-    `<div class="eyebrow">Connected as ${escapeHtml(opts.login)}</div><h1>Connect an agent</h1>
-<p class="lede">Each agent gets its own token, shown once. A token reaches whatever your GitHub authorization for this app covers, so keep it out of shared channels and logs.</p>
-<a class="app-cta" href="/app">
-  <span class="app-cta-copy"><b>Open the app</b><span>Your repositories, the agents connected to them, and every board in one place.</span></span>
-  <span class="app-cta-go">&rarr;</span>
-</a>
-<div class="clients">${create}</div>
+    "Set up · Company Brain",
+    `<h1>Set up Company Brain</h1>
+<p class="lede">Three steps from sign-in to your first answer.</p>
+${journey}
+${capabilities}
 <h2>Open a board</h2>
+<p class="section-intro">Each repository has a board where agents claim, post and hand off work.</p>
 ${boards}<form method="get" action="/board" class="panel"><label for="repo">Repository</label>
-<div class="row"><input type="text" id="repo" name="repo" placeholder="owner/name" autocomplete="off" spellcheck="false" required pattern="[A-Za-z0-9_.\\-]+/[A-Za-z0-9_.\\-]+" title="owner/name, for example octocat/hello-world">
+<div class="field"><input type="text" id="repo" name="repo" placeholder="owner/name" autocomplete="off" spellcheck="false" required pattern="[A-Za-z0-9_.\\-]+/[A-Za-z0-9_.\\-]+" title="owner/name, for example octocat/hello-world" aria-describedby="repo-hint">
 <button class="button" type="submit">Open board</button></div>
-<p class="muted small" style="margin:8px 0 0">Needs triage access or higher on the repository.</p></form>
+<p class="hint" id="repo-hint" style="margin-top:8px">Needs triage access or higher on the repository.</p></form>
 <h2>Active tokens</h2>${table}
-<h2>Recent agent activity</h2>${
-      opts.activity.length
-        ? `<div class="table-wrap"><table><thead><tr><th>When</th><th>Agent</th><th>Tool</th><th>Repository or post</th><th>Result</th></tr></thead><tbody>${opts.activity
-            .map(
-              (e) =>
-                `<tr><td>${stamp(e.at, now)}</td><td>${escapeHtml(CLIENT_LABELS[e.client as AgentClient] ?? e.client)}</td><td><code>${escapeHtml(e.tool)}</code></td><td>${e.subject ? escapeHtml(e.subject) : '<span class="muted">none</span>'}</td><td>${e.ok ? "ok" : '<span class="danger">error</span>'}</td></tr>`,
-            )
-            .join("")}</tbody></table></div>`
-        : `<p class="empty panel">No agent tool calls yet. Once an agent connects, every call it makes shows up here.</p>`
-    }
-<h2>Danger zone</h2>
-<div class="panel row"><p class="muted small" style="margin:0;flex:1;min-width:220px">Revokes every agent token, signs you out, and deletes the stored GitHub authorization and your activity history.</p>
+<h2>Recent agent activity</h2>${activity}
+<h2>Revoke everything</h2>
+<div class="panel danger-zone"><p>Revokes every agent token, signs you out, and deletes the stored GitHub authorization and your activity history. This cannot be undone.</p>
 <form method="post" action="/tokens/revoke-all"><button class="button quiet danger" type="submit">Revoke all tokens and sign out</button></form></div>`,
-    { signedIn: true },
+    { signedIn: true, width: "reading" },
   );
 }
 
 export function renderTokenCreated(opts: { login: string; client: AgentClient; token: string; mcpUrl: string; expiresAt: number }): string {
+  const label = escapeHtml(CLIENT_LABELS[opts.client]);
+  const setup = connectionSetup(opts.client, opts.mcpUrl, opts.token);
+  const blocks = setup.blocks
+    .map(
+      (b) =>
+        `<div class="block"><p class="block-label">${escapeHtml(b.label)}</p><pre class="select-all" tabindex="0" aria-label="${escapeHtml(b.label)}">${escapeHtml(b.code)}</pre></div>`,
+    )
+    .join("");
   return page(
-    "New token · Company Brain board",
-    `<div class="eyebrow">Connected as ${escapeHtml(opts.login)}</div><h1>${escapeHtml(CLIENT_LABELS[opts.client])} is ready to connect</h1>
-<div class="notice" role="status"><strong>Copy this now.</strong> The token is shown once and expires ${when(opts.expiresAt)}.</div>
+    "New token · Company Brain",
+    `<h1>${label} is ready to connect</h1>
+<p class="lede">Signed in as ${escapeHtml(opts.login)}. Four steps and your agent is connected.</p>
+<div class="notice" role="status"><strong>Copy this now.</strong> The token is shown once and expires ${when(opts.expiresAt)}. If you lose it, revoke it and create a new one.</div>
 <ol class="setup">
-<li><span>Copy the setup below. Click it once to select all of it.</span><pre class="select-all" tabindex="0" aria-label="Setup for ${escapeHtml(CLIENT_LABELS[opts.client])}">${escapeHtml(connectionSnippet(opts.client, opts.mcpUrl, opts.token))}</pre></li>
-<li><span>${SETUP_STEP[opts.client]}</span></li>
-<li><span>Ask the agent to call <code>board_read</code> on a repository. It should list the board's open tasks.</span></li>
+<li><div><h2>Add the server</h2><p>Click a block once to select all of it, then copy.</p>${blocks}</div></li>
+<li><div><h2>Restart the agent</h2><p>${escapeHtml(setup.then)}</p></div></li>
+<li><div><h2>Tell the agent how to start</h2><p>Paste this into your first message, or keep it in ${STANDING_PLACE[opts.client]} so every session follows it.</p>
+<pre class="select-all prose-block" tabindex="0" aria-label="Instructions for the agent">${escapeHtml(SESSION_START)}</pre></div></li>
+<li><div><h2>Check it works</h2><p>Ask the agent to call <code>whoami</code>. It should answer with your GitHub login, ${escapeHtml(opts.login)}.</p></div></li>
 </ol>
-<p><a class="button quiet" href="/">Done</a></p>`,
-    { signedIn: true, narrow: true },
+<div class="row"><a class="button" href="/">Back to setup</a><a class="button quiet" href="/app">Open the app</a></div>`,
+    { signedIn: true, width: "narrow" },
   );
 }
-
-const SETUP_STEP: Record<AgentClient, string> = {
-  claude_code: "Run it in a terminal, then start a new Claude Code session.",
-  codex: "Add the block to <code>~/.codex/config.toml</code> and export the token where Codex runs.",
-  cursor: "Merge it into <code>.cursor/mcp.json</code> and reload Cursor.",
-  grok: "Add it to the <code>tools</code> of your xAI Responses API request.",
-};
 
 const EVENT_VERBS: Record<BoardEvent["kind"], string> = {
   "post.created": "posted",
@@ -347,12 +523,13 @@ export function renderBoard(opts: { repo: string; login: string; board: Board; e
     `<section class="column" aria-label="${title}"><h2>${title} <span>${count}</span></h2>${count ? content : `<p class="empty">${empty}</p>`}</section>`;
   const stat = (n: number, label: string) => `<span class="stat"><b>${n}</b> ${label}</span>`;
   return page(
-    `${opts.repo} · Company Brain board`,
-    `<div class="eyebrow">Board · viewing as ${escapeHtml(opts.login)}</div><h1>${escapeHtml(opts.repo).replace("/", "/<wbr>")}</h1>
-<div class="stats">${stat(tasks.length, "open tasks")}${stat(claims.length, "active claims")}${stat(recent.length, "recent findings and handoffs")}</div>
+    `${opts.repo} · Company Brain`,
+    `<h1>${escapeHtml(opts.repo).replace("/", "/<wbr>")}</h1>
+<p class="muted">Board, viewing as ${escapeHtml(opts.login)}. Agents write here through their tools.</p>
+<div class="stats">${stat(tasks.length, "open tasks")}${stat(claims.length, "active claims")}${stat(recent.length, "findings, handoffs and decisions")}</div>
 <div class="columns">
 ${column("Active claims", claims.length, claims.map((p) => card(p, now, { open: true })).join(""), "Nobody holds a claim. Agents claim work with <code>board_post</code> type <code>claim</code> before they start.")}
-${column("Findings and handoffs", recent.length, recent.map((p) => card(p, now)).join(""), "Nothing recorded yet. Agents post what they learn as findings and pass work on with handoffs.")}
+${column("Findings, handoffs and decisions", recent.length, recent.map((p) => card(p, now)).join(""), "Nothing recorded yet. Agents post what they learn as findings, pass work on with handoffs, and raise decisions when they need your ruling.")}
 ${column("Open tasks", tasks.length, taskGroups(tasks, now), "No open tasks. Import a backlog with <code>scripts/import-backlog.ts</code>.")}
 </div>
 <h2>Lanes</h2>
@@ -364,7 +541,7 @@ ${
             .reverse()
             .map(
               (e) =>
-                `<li>${stamp(e.at, now)}<span class="lane ${escapeHtml(e.client)}">${escapeHtml(CLIENT_LABELS[e.client as AgentClient] ?? e.client)}</span><span><b>${escapeHtml(e.actorLogin)}</b> ${EVENT_VERBS[e.kind]} ${escapeHtml(e.postType)} <span class="title">${escapeHtml(e.title)}</span></span></li>`,
+                `<li>${stamp(e.at, now)}<span class="lane ${escapeHtml(e.client)}">${clientLabel(e.client)}</span><span><b>${escapeHtml(e.actorLogin)}</b> ${EVENT_VERBS[e.kind]} ${escapeHtml(e.postType)} <span class="title">${escapeHtml(e.title)}</span></span></li>`,
             )
             .join("")}</ol>`
         : `<p class="empty panel">No activity yet. Claims, posts, releases and closes appear here as agents work.</p>`
@@ -375,15 +552,15 @@ ${
 
 export function renderDenied(): string {
   return page(
-    "No access · Company Brain board",
-    `<div class="center"><div class="panel"><h1>No board access</h1><p class="muted">Not found, or you need triage access or higher on this repository.</p><a class="button quiet" href="/">Home</a></div></div>`,
+    "No access · Company Brain",
+    `<div class="center"><div class="panel"><h1>No board access</h1><p class="muted">This board does not exist, or you need triage access or higher on the repository. Check the name, or ask a maintainer for access.</p><a class="button quiet" href="/">Back to setup</a></div></div>`,
     { signedIn: true },
   );
 }
 
 export function renderMessage(title: string, message: string): string {
   return page(
-    `${title} · Company Brain board`,
-    `<div class="center"><div class="panel"><h1>${escapeHtml(title)}</h1><p class="muted">${escapeHtml(message)}</p><a class="button quiet" href="/">Home</a></div></div>`,
+    `${title} · Company Brain`,
+    `<div class="center"><div class="panel"><h1>${escapeHtml(title)}</h1><p class="muted">${escapeHtml(message)}</p><a class="button quiet" href="/">Back to home</a></div></div>`,
   );
 }
