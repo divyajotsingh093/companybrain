@@ -949,7 +949,7 @@ export function App(): JSX.Element {
             agents: me.tokens.length,
             sources: sources?.sources.length ?? 0,
             memories: memories.length,
-            learnedByAgents: memories.some((m) => m.memory && !m.memory.auto) || skills.some((s) => Object.values(s.skill ?? {}).some((p) => p.learned.length > 0)),
+            taught: memories.some((m) => m.memory && !m.memory.auto) || skills.some((s) => Object.values(s.skill ?? {}).some((p) => p.learned.length > 0)),
             skills: skills.length,
             reviews: pendingReviews(work),
             decisions: decisions?.open.length ?? 0,

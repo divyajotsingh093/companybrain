@@ -18,7 +18,7 @@ export interface HomeFacts {
   agents: number;
   sources: number;
   memories: number;
-  learnedByAgents: boolean;
+  taught: boolean;
   skills: number;
   reviews: number;
   decisions: number;
@@ -146,10 +146,10 @@ function Journey({ facts, gateways, onGo }: { facts: HomeFacts; gateways: number
   const pal = usePal();
   const steps: Array<{ title: string; detail: string; done: boolean; go?: Destination; optional?: boolean }> = [
     { title: "Sign in with GitHub", detail: `Signed in as ${facts.login}. Access follows your repository permissions.`, done: true },
-    { title: "Connect an agent", detail: "Create a token and add the MCP server to Claude Code, Codex or Cursor. Your memory and a starter skill fill in as it attaches.", done: facts.agents > 0, go: "agents" },
     { title: "Give it knowledge", detail: "Index a repository or add files, so answers have something to draw on.", done: facts.sources > 0, go: "sources" },
+    { title: "Teach it about you", detail: "Save something your agents and answers should always know with Remember this above, or let a connected agent add memories as it works.", done: facts.taught, go: "memory" },
+    { title: "Connect an agent", detail: "Company Brain works on its own. Connect Claude Code, Codex or Cursor when you want your agents to read and grow the same brain; a starter skill fills in as it attaches.", done: facts.agents > 0, go: "agents", optional: true },
     { title: "Connect a tool", detail: "Add another MCP server, like your tracker or docs, and agents reach it through Company Brain.", done: (gateways ?? 0) > 0, go: "gateway", optional: true },
-    { title: "Let your agents learn", detail: "As agents work they save memories and add to skills. The first one shows up here.", done: facts.learnedByAgents, go: "memory" },
   ];
   const required = steps.filter((s) => !s.optional);
   const done = required.filter((s) => s.done).length;

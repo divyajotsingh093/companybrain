@@ -274,7 +274,7 @@ const STANDING_PLACE: Record<AgentClient, string> = {
 };
 
 const SESSION_START =
-  "At the start of every session, call board_inbox to see what is waiting for you, then brain_search for what you are about to work on. Claim work with board_post before you start it, and save what you learn with brain_write.";
+  "At the start of every session, call memory_index to recall what you know about this person and their work, and board_inbox to see what is waiting for you. Before a task, call brain_search and skill_read for it. Claim work with board_post before you start it. As you learn, save durable facts with memory_save and what worked with skill_learn.";
 
 const CAPABILITIES: Array<{ title: string; text: string; tools: string[] }> = [
   {
@@ -286,6 +286,21 @@ const CAPABILITIES: Array<{ title: string; text: string; tools: string[] }> = [
     title: "Remember and search the company brain",
     text: "Save projects, decisions, lessons and rules under a name so the next session still has them. Search everything indexed or recorded, and follow the links between entries.",
     tools: ["brain_search", "brain_read", "brain_write", "brain_links", "brain_forget"],
+  },
+  {
+    title: "Know you and your work",
+    text: "Recall who you are, your projects, the topics you care about and how you like work done, one fact per memory with why and how to apply it. Agents add to it as they learn.",
+    tools: ["memory_index", "memory_save"],
+  },
+  {
+    title: "Grow skills as they work",
+    text: "Read a skill before a task, in its eight parts from Skill and Soul to Tools, Connectors and Plugins, and add what held up afterwards, so the next run starts smarter.",
+    tools: ["skill_read", "skill_learn"],
+  },
+  {
+    title: "Reach your other tools",
+    text: "Call the other MCP servers you connected under Gateway, like your tracker or docs, with your tokens kept on the server and every call logged.",
+    tools: ["gateway_servers", "gateway_tools", "gateway_call"],
   },
   {
     title: "Ask you for a decision",
@@ -324,8 +339,8 @@ ${error}<div class="row">${action}</div>
 <h2>How to start</h2>
 <ol class="how">
 <li><h3>Sign in with GitHub</h3><p>Install the app on the repositories you choose.</p></li>
-<li><h3>Connect an agent</h3><p>Create a token and paste its setup into your agent.</p></li>
-<li><h3>Ask a question</h3><p>Index a repository in the app, then ask about it.</p></li>
+<li><h3>Ask a question</h3><p>Index a repository in the app, then ask about it. That is all you need.</p></li>
+<li><h3>Connect an agent, if you want</h3><p>Create a token and paste its setup into Claude Code, Codex, Cursor or Grok, so your agents share the same brain.</p></li>
 </ol>
 <h2>Safe by default</h2>
 <ul class="trust">
@@ -362,10 +377,8 @@ function step(n: number, state: "done" | "current" | "todo", title: string, stat
 <div class="step-body"><h2>${title} <span class="status${state === "todo" ? "" : " on"}">${status}</span></h2>${body}</div></li>`;
 }
 
-function knowledgeStep(indexed: boolean, agentConnected: boolean): { state: "done" | "current" | "todo"; status: string } {
-  if (indexed) return { state: "done", status: "Done" };
-  if (agentConnected) return { state: "current", status: "Next" };
-  return { state: "todo", status: "After step 2" };
+function knowledgeStep(indexed: boolean): { state: "done" | "current" | "todo"; status: string } {
+  return indexed ? { state: "done", status: "Done" } : { state: "current", status: "Next" };
 }
 
 export function renderConnected(opts: { login: string; tokens: TokenRow[]; activity: AuditEntry[]; boards: string[]; indexed: boolean; now: number }): string {
@@ -382,30 +395,30 @@ export function renderConnected(opts: { login: string; tokens: TokenRow[]; activ
     (c) => `<form method="post" action="/tokens" class="panel client"><h3>${CLIENT_LABELS[c]}</h3><p>${CLIENT_NOTES[c]}</p>
 <input type="hidden" name="client" value="${c}"><button class="button${agentConnected ? " quiet" : ""}" type="submit">Create ${CLIENT_LABELS[c]} token</button></form>`,
   ).join("");
-  const agentStatus = agentConnected ? "Done" : lastUse.size ? "Waiting for the agent" : "Next";
+  const agentStatus = agentConnected ? "Done" : lastUse.size ? "Waiting for the agent" : "Optional";
   const agentIntro = agentConnected
     ? "Your agent has connected. Add another the same way, one token per agent."
     : lastUse.size
       ? "A token exists, but no agent has used it yet. Paste its setup into the agent and start a session. Lost the setup? Create a new token."
-      : "Pick the agent you use. You get a token and a setup to paste into it. The token is shown once and reaches whatever your GitHub authorization for this app covers, so keep it out of shared channels and logs.";
-  const knowledge = knowledgeStep(opts.indexed, agentConnected);
+      : "Company Brain works on its own; connect an agent when you want Claude Code, Codex, Cursor or Grok to read and grow the same brain. Pick the agent you use and you get a token and a setup to paste into it. The token is shown once and reaches whatever your GitHub authorization for this app covers, so keep it out of shared channels and logs.";
+  const knowledge = knowledgeStep(opts.indexed);
   const journey = `<ol class="journey">
 ${step(1, "done", "Connect GitHub", "Done", `<p>Connected as ${escapeHtml(opts.login)}. Agents read only what both your GitHub account and this app can reach.</p>`)}
-${step(2, agentConnected ? "done" : "current", "Connect an agent", agentStatus, `<p>${agentIntro}</p>${agents}<div class="clients">${create}</div>`)}
 ${step(
-  3,
+  2,
   knowledge.state,
   "Add knowledge, then ask",
   knowledge.status,
-  `<p>In the app, open Sources and index a repository or add a file. Then ask a question on the Ask screen. Decisions and work waiting for your review live there too.</p><a class="button${agentConnected || opts.indexed ? "" : " quiet"}" href="/app">Open the app</a>`,
+  `<p>In the app, open Sources and index a repository or add a file. Then ask a question from Home. Your memory, skills, decisions and work waiting for review live there too.</p><a class="button" href="/app">Open the app</a>`,
 )}
+${step(3, agentConnected ? "done" : lastUse.size ? "current" : "todo", "Connect an agent", agentStatus, `<p>${agentIntro}</p>${agents}<div class="clients">${create}</div>`)}
 </ol>`;
   const capabilities = `<h2>What your agents can do</h2>
 <p class="section-intro">Once connected, an agent gets these tools. Anything it reads from repositories or other agents reaches it as data, never as instructions.</p>
 <div class="caps">${CAPABILITIES.map(
     (c) => `<section class="panel cap" aria-label="${c.title}"><h3>${c.title}</h3><p>${c.text}</p><div class="tools">${c.tools.map((t) => `<code class="tool">${t}</code>`).join("")}</div></section>`,
   ).join("")}</div>
-<p class="muted small tip">Tell your agent to call <code class="tool">board_inbox</code> and <code class="tool">brain_search</code> at the start of every session.</p>`;
+<p class="muted small tip">Tell your agent to call <code class="tool">memory_index</code> and <code class="tool">board_inbox</code> at the start of every session.</p>`;
   const boards = opts.boards.length
     ? `<ul class="boards">${opts.boards
         .map((r) => {
@@ -422,7 +435,7 @@ ${step(
     .join("");
   const table = rows
     ? `<div class="table-wrap"><table><thead><tr><th>Agent</th><th>Created</th><th>Last used</th><th>Expires</th><th>Action</th></tr></thead><tbody>${rows}</tbody></table></div>`
-    : `<p class="empty panel">No agent tokens yet. Create one in step 2, paste its setup into the agent, and it appears here.</p>`;
+    : `<p class="empty panel">No agent tokens yet. Create one in step 3, paste its setup into the agent, and it appears here.</p>`;
   const activity = opts.activity.length
     ? `<div class="table-wrap"><table><thead><tr><th>When</th><th>Agent</th><th>Tool</th><th>Repository or post</th><th>Result</th></tr></thead><tbody>${opts.activity
         .map(
@@ -434,7 +447,7 @@ ${step(
   return page(
     "Set up · Company Brain",
     `<h1>Set up Company Brain</h1>
-<p class="lede">Three steps from sign-in to your first answer.</p>
+<p class="lede">Sign in, add knowledge, and ask. Connecting an agent is optional.</p>
 ${journey}
 ${capabilities}
 <h2>Open a board</h2>

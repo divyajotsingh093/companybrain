@@ -204,6 +204,10 @@ export function createApp(deps: AppDeps): Hono {
       await auth.saveGrant(viewer.id, viewer.login, grant);
       const issued = await auth.issue(viewer.id, "session", "web", config.sessionTtlMs);
       if (!issued) return fail("exchange");
+      await Promise.race([
+        quietly("person", async () => seedPerson(store, viewer.id, viewer.login, (await githubFor(grant.accessToken).listRepos(12)).map((r) => r.fullName))),
+        new Promise((resolve) => setTimeout(resolve, SEED_WAIT_MS)),
+      ]);
       setCookie(c, SESSION_COOKIE, issued.token, {
         httpOnly: true,
         secure,
