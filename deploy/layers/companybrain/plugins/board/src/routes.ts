@@ -48,6 +48,7 @@ const REINDEX_BATCH = 50;
 const REINDEX_GIVE_UP_MS = 30 * 24 * 3_600_000;
 const ASK_PER_DAY = 200;
 const SEED_WAIT_MS = 3_000;
+const SUGGEST_PER_MINUTE = 30;
 const REINDEX_BUDGET_MS = 150_000;
 const INDEX_PER_MINUTE = 6;
 const CSP = "default-src 'none'; style-src 'unsafe-inline'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'";
@@ -258,8 +259,8 @@ export function createApp(deps: AppDeps): Hono {
     c.header("cache-control", "no-store");
     return c.html(
       `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<meta name="color-scheme" content="dark"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Geist:wght@300..700&family=Geist+Mono:wght@400;500&display=swap">
-<title>Company Brain</title></head><body style="margin:0;background:#050505"><div id="root"></div><script type="module" src="/app/bundle.js"></script></body></html>`,
+<meta name="color-scheme" content="dark"><link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Cdefs%3E%3ClinearGradient id='g' x1='0' y1='0' x2='1' y2='1'%3E%3Cstop offset='0' stop-color='#a6fad8'/%3E%3Cstop offset='.55' stop-color='#4fdfa8'/%3E%3Cstop offset='1' stop-color='#149b73'/%3E%3C/linearGradient%3E%3C/defs%3E%3Crect x='1' y='1' width='30' height='30' rx='9' fill='url%28#g%29'/%3E%3Cg stroke='#04261b' stroke-width='1.7' stroke-linecap='round' stroke-linejoin='round' fill='none'%3E%3Cpath d='M9.5 12.5 16 8.5 22.5 12.5 19.5 20.5 12.5 20.5Z'/%3E%3Cpath d='M9.5 12.5 16 15.5 22.5 12.5M16 8.5V15.5M12.5 20.5 16 15.5 19.5 20.5'/%3E%3C/g%3E%3Cg fill='#04261b'%3E%3Ccircle cx='9.5' cy='12.5' r='2.3'/%3E%3Ccircle cx='16' cy='8.5' r='2.3'/%3E%3Ccircle cx='22.5' cy='12.5' r='2.3'/%3E%3Ccircle cx='12.5' cy='20.5' r='2.3'/%3E%3Ccircle cx='19.5' cy='20.5' r='2.3'/%3E%3C/g%3E%3Ccircle cx='16' cy='15.5' r='3' fill='#fff' stroke='#04261b' stroke-width='1.7'/%3E%3C/svg%3E"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Geist:wght@300..700&family=Geist+Mono:wght@400;500&display=swap">
+<title>Company Brain</title></head><body style="margin:0;background:#08080a"><div id="root"></div><script type="module" src="/app/bundle.js"></script></body></html>`,
     );
   });
 
@@ -326,15 +327,14 @@ export function createApp(deps: AppDeps): Hono {
       store.listGateways(principal.uid),
       store.recentSkillReads(principal.uid, since),
     ]);
-    const visible = async <T extends { repoId: number; repoName: string }>(posts: T[]): Promise<T[]> => {
-      const ok = await Promise.all(posts.map((p) => read(p.repoName, p.repoId)));
-      return posts.filter((_, i) => ok[i]);
-    };
+    const repos = new Map([...tasks, ...open].map((p) => [p.repoId, p.repoName]));
+    const allowed = new Map(await Promise.all([...repos].map(async ([id, name]) => [id, await read(name, id)] as const)));
+    const visible = <T extends { repoId: number }>(posts: T[]): T[] => posts.filter((p) => allowed.get(p.repoId) === true);
     const observed = await Promise.all(reads.map(async (skill) => ({ skill, tools: (await store.skillUsage(principal.uid, skill, since)).tools })));
     return {
       now: now(),
-      reviews: await visible(tasks.filter((t) => t.status === "review")),
-      decisions: await visible(open),
+      reviews: visible(tasks.filter((t) => t.status === "review")),
+      decisions: visible(open),
       unanswered,
       missing,
       sources,
@@ -347,6 +347,7 @@ export function createApp(deps: AppDeps): Hono {
   app.get("/api/app/suggestions", async (c) => {
     const principal = await session(c);
     if (!principal) return c.json({ error: "sign_in" }, 401);
+    if ((await store.hit(`suggest:${principal.uid}`, 60_000)) > SUGGEST_PER_MINUTE) return c.json({ error: "rate_limited" }, 429);
     const [signals, history] = await Promise.all([gatherSignals(principal), store.suggestionHistory(principal.uid)]);
     const choices = history.stats.reduce((n, s) => n + s.n, 0);
     return c.json({ suggestions: rank(candidates(signals), history, now()), choices, now: now() });
@@ -356,6 +357,7 @@ export function createApp(deps: AppDeps): Hono {
     const principal = await session(c);
     if (!principal) return c.json({ error: "sign_in" }, 401);
     if (!sameOrigin(c)) return c.json({ error: "blocked" }, 403);
+    if ((await store.hit(`suggest:${principal.uid}`, 60_000)) > SUGGEST_PER_MINUTE) return c.json({ error: "rate_limited" }, 429);
     let payload: { key?: unknown; verdict?: unknown };
     try {
       payload = await c.req.json();

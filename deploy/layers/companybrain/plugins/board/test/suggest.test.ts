@@ -96,3 +96,25 @@ test("a stale repository can be refreshed straight from its suggestion", async (
   const sources = (await (await json(h, "/api/app/sources", fresh)).json()) as { sources: Array<{ indexedAt: number }> };
   assert.equal(sources.sources[0]?.indexedAt, h.clock.now, "accepting ran the refresh");
 });
+
+test("no question text is kept in the loop's own history, and disconnecting clears it", async () => {
+  const h = await buildApp({}, { model: async () => "answer" });
+  const cookie = await sessionCookie(h, "gh-alice");
+  await json(h, "/api/app/ask", cookie, "POST", { question: "what is the secret launch date?" });
+  const gap = (await list(h, cookie)).suggestions.find((s) => s.kind === "unanswered_question");
+  assert.ok(gap && !gap.key.includes("secret"), "the suggestion key is a hash, not the question");
+  await json(h, "/api/app/suggestions", cookie, "POST", { key: gap?.key, verdict: "snoozed" });
+  assert.ok(!JSON.stringify(await h.store.suggestionHistory(1)).includes("secret"));
+  assert.ok(!(await h.store.auditTrail(1, 50)).some((a) => a.tool === "ask"), "unanswered questions stay out of activity lists");
+
+  await h.store.deleteCredential(1);
+  assert.deepEqual((await h.store.suggestionHistory(1)).latest, [], "disconnecting removes the choices too");
+});
+
+test("suggestions are rate limited", async () => {
+  const h = await buildApp();
+  const cookie = await sessionCookie(h, "gh-alice");
+  let limited = false;
+  for (let i = 0; i < 32 && !limited; i += 1) limited = (await json(h, "/api/app/suggestions", cookie)).status === 429;
+  assert.ok(limited);
+});

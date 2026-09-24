@@ -16,6 +16,7 @@ export const ACTIVE_AGENT_TOKENS_PER_USER = 20;
 export const MAX_POSTS_PER_REPO = 5_000;
 const RETAIN_POSTS_MS = 180 * 24 * 3_600_000;
 const RETAIN_AUDIT_MS = 30 * 24 * 3_600_000;
+const RETAIN_SUGGESTIONS_MS = 180 * 24 * 3_600_000;
 const EXPIRING_SOON_MS = 30 * 60_000;
 export const MAX_AUDIT_PER_USER = 2_000;
 export const ACTIVE_CLAIMS_PER_USER = 10;
@@ -847,7 +848,7 @@ export function openStore(db: Database, now: () => number = Date.now) {
 
   async function auditTrail(uid: number, limit = 50, tool?: string): Promise<AuditEntry[]> {
     if (tool) return rows(`SELECT at, client, tool, subject, ok FROM audit_log WHERE uid = $1 AND tool = $3 ORDER BY at DESC, id DESC LIMIT $2`, [uid, limit, tool]);
-    return rows(`SELECT at, client, tool, subject, ok FROM audit_log WHERE uid = $1 ORDER BY at DESC, id DESC LIMIT $2`, [uid, limit]);
+    return rows(`SELECT at, client, tool, subject, ok FROM audit_log WHERE uid = $1 AND tool <> 'ask' ORDER BY at DESC, id DESC LIMIT $2`, [uid, limit]);
   }
 
   async function hasTask(repoId: number, title: string): Promise<boolean> {
@@ -952,6 +953,7 @@ export function openStore(db: Database, now: () => number = Date.now) {
       await tx.query(`DELETE FROM credentials WHERE uid = $1`, [uid]);
       await tx.query(`DELETE FROM audit_log WHERE uid = $1`, [uid]);
       await tx.query(`DELETE FROM gateway_servers WHERE owner_uid = $1`, [uid]);
+      await tx.query(`DELETE FROM suggestion_events WHERE uid = $1`, [uid]);
     });
   }
 
@@ -1026,8 +1028,11 @@ export function openStore(db: Database, now: () => number = Date.now) {
 
   async function suggestionHistory(uid: number): Promise<{ stats: Array<{ kind: string; verdict: string; n: number }>; latest: Array<{ key: string; verdict: string; at: number }> }> {
     const [stats, latest] = await Promise.all([
-      rows<{ kind: string; verdict: string; n: number }>(`SELECT kind, verdict, COUNT(*)::int AS n FROM suggestion_events WHERE uid = $1 GROUP BY kind, verdict`, [uid]),
-      rows<{ key: string; verdict: string; at: number }>(`SELECT DISTINCT ON (key) key, verdict, at FROM suggestion_events WHERE uid = $1 ORDER BY key, at DESC, id DESC LIMIT 2000`, [uid]),
+      rows<{ kind: string; verdict: string; n: number }>(`SELECT kind, verdict, COUNT(*)::int AS n FROM suggestion_events WHERE uid = $1 AND at > $2 GROUP BY kind, verdict`, [uid, now() - RETAIN_SUGGESTIONS_MS]),
+      rows<{ key: string; verdict: string; at: number }>(
+        `SELECT key, verdict, at FROM (SELECT DISTINCT ON (key) key, verdict, at FROM suggestion_events WHERE uid = $1 ORDER BY key, at DESC, id DESC) latest ORDER BY at DESC LIMIT 2000`,
+        [uid],
+      ),
     ]);
     return { stats, latest };
   }
@@ -1444,6 +1449,7 @@ export function openStore(db: Database, now: () => number = Date.now) {
     const cutoff = t - RETAIN_EXPIRED_MS;
     let posts = await changed(`DELETE FROM posts WHERE type = 'claim' AND (released_at < $1 OR (released_at IS NULL AND expires_at < $1))`, [cutoff]);
     posts += await changed(`DELETE FROM posts WHERE (type IN ('finding', 'handoff') OR (type = 'decision' AND closed_at IS NOT NULL)) AND created_at < $1`, [t - RETAIN_POSTS_MS]);
+    await changed(`DELETE FROM suggestion_events WHERE at < $1`, [t - RETAIN_SUGGESTIONS_MS]);
     posts += await changed(
       `DELETE FROM posts WHERE id IN (
          SELECT id FROM (

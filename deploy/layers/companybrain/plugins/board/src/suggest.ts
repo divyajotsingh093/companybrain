@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { parseSkill, pulse, type SkillPart } from "./skills.ts";
 
 export type SuggestionKind =
@@ -119,7 +120,7 @@ export function candidates(sig: Signals): Array<Omit<Suggestion, "score" | "lear
   }
   for (const q of sig.unanswered) {
     out.push({
-      key: `unanswered:${q.question.toLowerCase()}`,
+      key: `unanswered:${createHash("sha256").update(q.question.toLowerCase()).digest("base64url").slice(0, 22)}`,
       kind: "unanswered_question",
       title: `Nothing written down for "${q.question}"`,
       reason: q.n > 1 ? `Asked ${q.n} times and nothing in the brain answered it.` : "Asked, and nothing in the brain answered it.",
@@ -140,19 +141,20 @@ export function candidates(sig: Signals): Array<Omit<Suggestion, "score" | "lear
       }
     }
   }
-  const skillText = new Map(sig.skills.map((s) => [s.name.toLowerCase(), s.body.toLowerCase()]));
+  const byName = new Map(sig.skills.map((s) => [s.name.toLowerCase(), s]));
   for (const o of sig.observed) {
-    const body = skillText.get(o.skill.toLowerCase());
-    if (body === undefined) continue;
+    const entry = byName.get(o.skill.toLowerCase());
+    if (!entry) continue;
+    const body = entry.body.toLowerCase();
     for (const t of o.tools) {
       if (t.tool !== "gateway_call" || !t.subject || t.n < 2) continue;
       if (body.includes(t.subject.toLowerCase())) continue;
       out.push({
-        key: `tool:${o.skill.toLowerCase()}:${t.subject.toLowerCase()}`,
+        key: `tool:${entry.name.toLowerCase()}:${t.subject.toLowerCase()}`,
         kind: "tool_to_skill",
-        title: `Add ${t.subject} to "${o.skill}"`,
+        title: `Add ${t.subject} to "${entry.name}"`,
         reason: `Agents used it ${t.n} times right after reading this skill, but the skill does not mention it.`,
-        action: { type: "learn", skill: o.skill, part: "Tools", note: `Uses gateway_call ${t.subject}.`, label: "Add to skill" },
+        action: { type: "learn", skill: entry.name, part: "Tools", note: `Uses gateway_call ${t.subject}.`, label: "Add to skill" },
       });
     }
   }

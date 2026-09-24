@@ -103,8 +103,8 @@ function injectAskStyles(pal: Record<string, string>): void {
     `
     .cb-composer {
       display: flex; flex-direction: column; gap: 12px; padding: 18px 14px 12px 20px; margin: 6px;
-      background: linear-gradient(180deg, rgba(255,255,255,0.05), rgba(255,255,255,0.015)), #0a0a0c; border: 0; border-radius: 26px;
-      box-shadow: inset 0 0 0 1px rgba(255,255,255,0.08), inset 0 1px 0 rgba(255,255,255,0.08), 0 0 0 6px rgba(255,255,255,0.025), 0 0 0 7px rgba(255,255,255,0.05), 0 40px 80px -40px rgba(0,0,0,0.9);
+      background: linear-gradient(180deg, rgba(255,255,255,0.07), rgba(255,255,255,0.02)), #111115; border: 0; border-radius: 26px;
+      box-shadow: inset 0 0 0 1px rgba(255,255,255,0.16), inset 0 1px 0 rgba(255,255,255,0.14), 0 0 0 6px rgba(255,255,255,0.04), 0 0 0 7px rgba(255,255,255,0.11), 0 40px 80px -40px rgba(0,0,0,0.9);
       transition: box-shadow 320ms ${EASE_OUT};
     }
     .cb-composer:focus-within { box-shadow: inset 0 0 0 1px ${pal.accent}73, inset 0 1px 0 rgba(255,255,255,0.08), 0 0 0 6px ${pal.accent}0f, 0 0 0 7px ${pal.accent}33, 0 40px 80px -40px rgba(0,0,0,0.9); }
@@ -132,7 +132,7 @@ function injectAskStyles(pal: Record<string, string>): void {
     .cb-intent {
       display: flex; flex-direction: column; gap: 6px; text-align: left; padding: 18px; cursor: pointer;
       border-radius: 22px; border: 0; background: linear-gradient(180deg, rgba(255,255,255,0.04), rgba(255,255,255,0.01)); color: ${pal.text};
-      box-shadow: inset 0 0 0 1px rgba(255,255,255,0.06), inset 0 1px 0 rgba(255,255,255,0.06);
+      box-shadow: inset 0 0 0 1px rgba(255,255,255,0.11), inset 0 1px 0 rgba(255,255,255,0.12);
       font-family: ${tokens.font.sans};
       transition: transform 420ms ${EASE_OUT}, box-shadow 320ms ${EASE_OUT}, background-color 320ms ${EASE_OUT};
     }
@@ -147,7 +147,7 @@ function injectAskStyles(pal: Record<string, string>): void {
     .cb-source {
       display: flex; flex-direction: column; gap: 8px; padding: 16px; border-radius: 20px; border: 0;
       background: linear-gradient(180deg, rgba(255,255,255,0.04), rgba(255,255,255,0.01)); scroll-margin: 24px;
-      box-shadow: inset 0 0 0 1px rgba(255,255,255,0.06), inset 0 1px 0 rgba(255,255,255,0.05);
+      box-shadow: inset 0 0 0 1px rgba(255,255,255,0.11), inset 0 1px 0 rgba(255,255,255,0.12);
       transition: box-shadow 320ms ${EASE_OUT}, background-color 320ms ${EASE_OUT};
     }
     .cb-source[data-on="true"] { box-shadow: inset 0 0 0 1px var(--kind-line); background: var(--kind-wash); }

@@ -908,6 +908,7 @@ export function App(): JSX.Element {
   const go = (next: Destination, text?: string): void => {
     select(next);
     if (text) {
+      if (next === "ask") setThread([]);
       setSeed(text);
       setAutoAsk(next === "ask");
     }

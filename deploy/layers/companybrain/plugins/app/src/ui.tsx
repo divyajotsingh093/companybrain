@@ -4,18 +4,18 @@ import { useId, type CSSProperties, type JSX, type KeyboardEvent, type ReactNode
 export const EASE_OUT = "cubic-bezier(0.32, 0.72, 0, 1)";
 
 const PAL = {
-  bg: "#050505",
-  bgElevated: "#0c0c0e",
-  bgSubtle: "rgba(255,255,255,0.03)",
-  bgMuted: "rgba(255,255,255,0.05)",
-  bgHover: "rgba(255,255,255,0.06)",
-  bgInput: "#0a0a0c",
-  text: "#ededef",
-  textSecondary: "rgba(237,237,239,0.62)",
-  textTertiary: "rgba(237,237,239,0.40)",
+  bg: "#08080a",
+  bgElevated: "#141418",
+  bgSubtle: "rgba(255,255,255,0.045)",
+  bgMuted: "rgba(255,255,255,0.07)",
+  bgHover: "rgba(255,255,255,0.08)",
+  bgInput: "#101014",
+  text: "#f4f4f6",
+  textSecondary: "rgba(244,244,246,0.74)",
+  textTertiary: "rgba(244,244,246,0.52)",
   textInverse: "#050505",
-  border: "rgba(255,255,255,0.10)",
-  borderSubtle: "rgba(255,255,255,0.06)",
+  border: "rgba(255,255,255,0.16)",
+  borderSubtle: "rgba(255,255,255,0.10)",
   borderFocus: "rgba(94,234,176,0.55)",
   accent: "#5eeab0",
   accentText: "#8ff2c9",
@@ -53,23 +53,29 @@ export const tokens = {
 const CSS = `
 .cb-root { font-family: ${tokens.font.sans}; color: ${PAL.text}; -webkit-font-smoothing: antialiased; }
 .cb-root *, .cb-root *::before, .cb-root *::after { box-sizing: border-box; }
-.cb-backdrop { position: fixed; inset: 0; pointer-events: none; z-index: 0;
+.cb-backdrop { position: fixed; inset: 0; pointer-events: none; z-index: 0; overflow: hidden;
   background:
-    radial-gradient(40rem 28rem at 12% -8%, rgba(94,234,176,0.10), transparent 70%),
-    radial-gradient(36rem 30rem at 96% 108%, rgba(96,165,250,0.08), transparent 70%),
-    ${PAL.bg}; }
-.cb-grain { position: fixed; inset: 0; pointer-events: none; z-index: 1; opacity: 0.04; mix-blend-mode: overlay;
+    radial-gradient(70rem 34rem at 55% -14%, rgba(94,234,176,0.20), transparent 62%),
+    radial-gradient(42rem 30rem at 4% 30%, rgba(56,189,248,0.07), transparent 65%),
+    radial-gradient(46rem 34rem at 100% 105%, rgba(129,140,248,0.10), transparent 65%),
+    linear-gradient(180deg, #0b0c0e 0%, ${PAL.bg} 55%); }
+.cb-backdrop::before { content: ""; position: absolute; inset: 0;
+  background-image: radial-gradient(rgba(255,255,255,0.13) 1px, transparent 1.3px); background-size: 24px 24px;
+  -webkit-mask-image: radial-gradient(ellipse 90% 70% at 50% 0%, #000 25%, transparent 78%); mask-image: radial-gradient(ellipse 90% 70% at 50% 0%, #000 25%, transparent 78%); }
+.cb-backdrop::after { content: ""; position: absolute; left: 10%; right: 10%; top: 0; height: 1px;
+  background: linear-gradient(90deg, transparent, rgba(143,242,201,0.55), transparent); }
+.cb-grain { position: fixed; inset: 0; pointer-events: none; z-index: 1; opacity: 0.05; mix-blend-mode: overlay;
   background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='160' height='160'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' stitchTiles='stitch'/></filter><rect width='100%' height='100%' filter='url(%23n)'/></svg>"); }
 
-.cb-bezel { position: relative; padding: 5px; border-radius: 28px; background: rgba(255,255,255,0.025);
-  box-shadow: 0 0 0 1px rgba(255,255,255,0.06); }
-.cb-core { position: relative; border-radius: 23px; background: linear-gradient(180deg, rgba(255,255,255,0.045), rgba(255,255,255,0.015)), ${PAL.bgInput};
-  box-shadow: inset 0 1px 0 rgba(255,255,255,0.07), 0 24px 48px -32px rgba(0,0,0,0.8); overflow: hidden; }
+.cb-bezel { position: relative; padding: 6px; border-radius: 28px; background: rgba(255,255,255,0.04);
+  box-shadow: 0 0 0 1px rgba(255,255,255,0.11), 0 30px 60px -36px rgba(0,0,0,0.9); }
+.cb-core { position: relative; border-radius: 22px; background: linear-gradient(180deg, rgba(255,255,255,0.06), rgba(255,255,255,0.02)), ${PAL.bgInput};
+  box-shadow: inset 0 0 0 1px rgba(255,255,255,0.10), inset 0 1px 0 rgba(255,255,255,0.14), 0 2px 8px rgba(0,0,0,0.35); overflow: hidden; }
 .cb-reveal { animation: cb-reveal 640ms ${EASE_OUT} both; }
 @keyframes cb-reveal { from { opacity: 0; transform: translateY(14px); filter: blur(6px); } }
 
 .cb-btn { display: inline-flex; align-items: center; justify-content: center; gap: 10px; border: 0; cursor: pointer; white-space: nowrap;
-  font-family: ${tokens.font.sans}; font-weight: 500; letter-spacing: -0.005em; border-radius: 999px; text-decoration: none;
+  font-family: ${tokens.font.sans}; font-weight: 550; letter-spacing: -0.005em; border-radius: 999px; text-decoration: none;
   transition: transform 260ms ${EASE_OUT}, background-color 260ms ${EASE_OUT}, color 260ms ${EASE_OUT}, box-shadow 260ms ${EASE_OUT}; }
 .cb-btn:active:not(:disabled) { transform: scale(0.98); }
 .cb-btn:disabled { cursor: not-allowed; opacity: 0.38; }
@@ -78,13 +84,13 @@ const CSS = `
 .cb-btn[data-arrow="true"][data-size="md"] { padding-right: 5px; }
 .cb-btn[data-arrow="true"][data-size="sm"] { padding-right: 3px; }
 .cb-btn[data-variant="primary"] { background: ${PAL.text}; color: ${PAL.textInverse}; box-shadow: inset 0 -1px 0 rgba(0,0,0,0.12), 0 10px 30px -12px rgba(237,237,239,0.35); }
-.cb-btn[data-variant="secondary"] { background: rgba(255,255,255,0.06); color: ${PAL.text}; box-shadow: inset 0 0 0 1px rgba(255,255,255,0.09), inset 0 1px 0 rgba(255,255,255,0.06); }
-.cb-btn[data-variant="ghost"] { background: transparent; color: ${PAL.textSecondary}; }
+.cb-btn[data-variant="secondary"] { background: rgba(255,255,255,0.08); color: ${PAL.text}; box-shadow: inset 0 0 0 1px rgba(255,255,255,0.16), inset 0 1px 0 rgba(255,255,255,0.10); }
+.cb-btn[data-variant="ghost"] { background: transparent; color: ${PAL.textSecondary}; box-shadow: inset 0 0 0 1px rgba(255,255,255,0.08); }
 .cb-btn[data-variant="danger"] { background: ${PAL.dangerBg}; color: ${PAL.danger}; box-shadow: inset 0 0 0 1px rgba(249,139,139,0.18); }
 @media (hover: hover) and (pointer: fine) {
   .cb-btn[data-variant="primary"]:hover:not(:disabled) { background: #ffffff; }
-  .cb-btn[data-variant="secondary"]:hover:not(:disabled) { background: rgba(255,255,255,0.09); }
-  .cb-btn[data-variant="ghost"]:hover:not(:disabled) { background: rgba(255,255,255,0.05); color: ${PAL.text}; }
+  .cb-btn[data-variant="secondary"]:hover:not(:disabled) { background: rgba(255,255,255,0.12); }
+  .cb-btn[data-variant="ghost"]:hover:not(:disabled) { background: rgba(255,255,255,0.07); color: ${PAL.text}; box-shadow: inset 0 0 0 1px rgba(255,255,255,0.14); }
   .cb-btn[data-variant="danger"]:hover:not(:disabled) { background: rgba(249,139,139,0.16); }
   .cb-btn:hover:not(:disabled) .cb-btn-orb { transform: translate(2px, -1px) scale(1.05); }
 }
@@ -100,16 +106,16 @@ const CSS = `
 @media (hover: hover) and (pointer: fine) { .cb-icon-btn:hover { color: ${PAL.text}; background: rgba(255,255,255,0.09); } }
 
 .cb-row { display: flex; align-items: center; gap: 16px; padding: 15px 20px; position: relative; transition: background-color 240ms ${EASE_OUT}; }
-.cb-row[data-divider="true"]::after { content: ""; position: absolute; left: 20px; right: 20px; bottom: 0; height: 1px; background: rgba(255,255,255,0.05); }
+.cb-row[data-divider="true"]::after { content: ""; position: absolute; left: 20px; right: 20px; bottom: 0; height: 1px; background: rgba(255,255,255,0.09); }
 .cb-row[data-clickable="true"] { cursor: pointer; }
-@media (hover: hover) and (pointer: fine) { .cb-row[data-clickable="true"]:hover { background: rgba(255,255,255,0.03); } }
+@media (hover: hover) and (pointer: fine) { .cb-row[data-clickable="true"]:hover { background: rgba(255,255,255,0.045); } }
 
-.cb-field { display: block; padding: 3px; border-radius: 17px; background: rgba(255,255,255,0.03); box-shadow: 0 0 0 1px rgba(255,255,255,0.07);
+.cb-field { display: block; padding: 3px; border-radius: 17px; background: rgba(255,255,255,0.045); box-shadow: 0 0 0 1px rgba(255,255,255,0.13);
   transition: box-shadow 260ms ${EASE_OUT}, background-color 260ms ${EASE_OUT}; }
 .cb-field:focus-within { box-shadow: 0 0 0 1px ${PAL.borderFocus}, 0 0 0 5px rgba(94,234,176,0.08); }
 .cb-field[data-error="true"] { box-shadow: 0 0 0 1px rgba(249,139,139,0.5); }
 .cb-input { display: block; width: 100%; border: 0; outline: none; border-radius: 14px; background: ${PAL.bgInput}; color: ${PAL.text};
-  font-family: ${tokens.font.sans}; font-size: 13.5px; line-height: 1.55; padding: 11px 15px; box-shadow: inset 0 1px 0 rgba(255,255,255,0.04); resize: vertical; }
+  font-family: ${tokens.font.sans}; font-size: 13.5px; line-height: 1.55; padding: 11px 15px; box-shadow: inset 0 0 0 1px rgba(255,255,255,0.06), inset 0 1px 2px rgba(0,0,0,0.4); resize: vertical; }
 .cb-input[data-size="sm"] { padding: 7px 12px; font-size: 12.5px; }
 .cb-input::placeholder { color: ${PAL.textTertiary}; }
 .cb-input:disabled { opacity: 0.5; cursor: not-allowed; }
@@ -118,8 +124,8 @@ select.cb-input { appearance: none; padding-right: 36px; cursor: pointer;
   background-repeat: no-repeat; background-position: right 14px center; }
 
 .cb-eyebrow { display: inline-flex; align-items: center; gap: 6px; width: max-content; border-radius: 999px; padding: 4px 11px;
-  font-size: 10px; letter-spacing: 0.2em; text-transform: uppercase; font-weight: 500; color: ${PAL.textSecondary};
-  background: rgba(255,255,255,0.04); box-shadow: inset 0 0 0 1px rgba(255,255,255,0.07); }
+  font-size: 10.5px; letter-spacing: 0.18em; text-transform: uppercase; font-weight: 600; color: ${PAL.text};
+  background: rgba(255,255,255,0.06); box-shadow: inset 0 0 0 1px rgba(255,255,255,0.14); }
 .cb-skel { background: linear-gradient(90deg, rgba(255,255,255,0.03) 0%, rgba(255,255,255,0.07) 50%, rgba(255,255,255,0.03) 100%);
   background-size: 200% 100%; animation: cb-shimmer 1.6s ${EASE_OUT} infinite; }
 @keyframes cb-shimmer { from { background-position: 150% 0; } to { background-position: -50% 0; } }
@@ -167,7 +173,7 @@ const HEADING: Record<number, CSSProperties> = {
 
 export function Heading({ children, level = 1, style }: Common & { level?: 1 | 2 | 3 | 4 | 5 | 6 }): JSX.Element {
   const Tag = `h${level}` as "h1";
-  return <Tag style={{ margin: 0, fontWeight: 500, color: PAL.text, textWrap: "balance", ...HEADING[level], ...style } as CSSProperties}>{children}</Tag>;
+  return <Tag style={{ margin: 0, fontWeight: level <= 2 ? 650 : 600, color: PAL.text, textWrap: "balance", ...HEADING[level], ...style } as CSSProperties}>{children}</Tag>;
 }
 
 const TEXT_SIZE: Record<string, CSSProperties> = { sm: tokens.type.sm, base: tokens.type.base, md: tokens.type.md, lg: tokens.type.lg };
@@ -202,7 +208,7 @@ export function Text({
 
 export function Caption({ children, style }: Common): JSX.Element {
   const shout = typeof children === "string" && children === children.toUpperCase() && /[A-Z]/.test(children);
-  const look: CSSProperties = shout ? { fontSize: 10.5, letterSpacing: "0.16em", fontWeight: 500 } : { fontSize: 12, letterSpacing: "0.005em" };
+  const look: CSSProperties = shout ? { fontSize: 10.5, letterSpacing: "0.16em", fontWeight: 600 } : { fontSize: 12, letterSpacing: "0.005em" };
   return <span style={{ color: PAL.textTertiary, lineHeight: 1.55, ...look, ...style }}>{children}</span>;
 }
 
@@ -303,7 +309,7 @@ export function ListItem({
       onKeyDown={onKey}
     >
       <div style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column", gap: 3 }}>
-        <span style={{ fontSize: 14, fontWeight: 500, color: PAL.text, letterSpacing: "-0.005em", overflowWrap: "anywhere" }}>{title}</span>
+        <span style={{ fontSize: 14, fontWeight: 580, color: PAL.text, letterSpacing: "-0.005em", overflowWrap: "anywhere" }}>{title}</span>
         {subtitle ? <span style={{ fontSize: 12.5, color: PAL.textSecondary, lineHeight: 1.5, overflowWrap: "anywhere" }}>{subtitle}</span> : null}
       </div>
       {right ? <div style={{ flexShrink: 0 }}>{right}</div> : null}
@@ -435,10 +441,36 @@ export function Tag({ children, style }: Common): JSX.Element {
   return <span style={{ display: "inline-flex", alignItems: "center", padding: "3px 10px", borderRadius: 999, fontSize: 11.5, color: PAL.textSecondary, background: "rgba(255,255,255,0.05)", boxShadow: "inset 0 0 0 1px rgba(255,255,255,0.07)", ...style }}>{children}</span>;
 }
 
-export function Orb({ size = 28 }: { size?: number; variant?: string; theme?: unknown }): JSX.Element {
+export function Logo({ size = 28 }: { size?: number }): JSX.Element {
+  const id = useId().replace(/:/g, "");
   return (
-    <span aria-hidden style={{ position: "relative", width: size, height: size, borderRadius: 999, flexShrink: 0, background: "radial-gradient(circle at 32% 28%, #d6fff0 0%, #5eeab0 34%, #0f5a44 72%, #04140f 100%)", boxShadow: "0 0 24px -4px rgba(94,234,176,0.55), inset 0 -2px 6px rgba(0,0,0,0.5)" }}>
-      <span style={{ position: "absolute", inset: -4, borderRadius: 999, boxShadow: "0 0 0 1px rgba(94,234,176,0.18)" }} />
-    </span>
+    <svg width={size} height={size} viewBox="0 0 32 32" role="img" aria-label="Company Brain" style={{ flexShrink: 0, display: "block" }}>
+      <defs>
+        <linearGradient id={`${id}-fill`} x1="0" y1="0" x2="1" y2="1">
+          <stop offset="0" stopColor="#a6fad8" />
+          <stop offset="0.55" stopColor="#4fdfa8" />
+          <stop offset="1" stopColor="#149b73" />
+        </linearGradient>
+        <linearGradient id={`${id}-shine`} x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0" stopColor="#ffffff" stopOpacity="0.55" />
+          <stop offset="0.5" stopColor="#ffffff" stopOpacity="0" />
+        </linearGradient>
+      </defs>
+      <rect x="1" y="1" width="30" height="30" rx="9" fill={`url(#${id}-fill)`} />
+      <rect x="1" y="1" width="30" height="30" rx="9" fill={`url(#${id}-shine)`} />
+      <rect x="1.5" y="1.5" width="29" height="29" rx="8.5" fill="none" stroke="#ffffff" strokeOpacity="0.35" />
+      <g stroke="#04261b" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" fill="none">
+        <path d="M9.5 12.5 16 8.5 22.5 12.5 19.5 20.5 12.5 20.5Z" />
+        <path d="M9.5 12.5 16 15.5 22.5 12.5M16 8.5V15.5M12.5 20.5 16 15.5 19.5 20.5" />
+      </g>
+      <g fill="#04261b">
+        <circle cx="9.5" cy="12.5" r="2.3" />
+        <circle cx="16" cy="8.5" r="2.3" />
+        <circle cx="22.5" cy="12.5" r="2.3" />
+        <circle cx="12.5" cy="20.5" r="2.3" />
+        <circle cx="19.5" cy="20.5" r="2.3" />
+      </g>
+      <circle cx="16" cy="15.5" r="3" fill="#ffffff" stroke="#04261b" strokeWidth="1.7" />
+    </svg>
   );
 }

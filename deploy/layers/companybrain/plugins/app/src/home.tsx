@@ -28,8 +28,8 @@ injectCss(
   "cb-home",
   `
   .cb-home-box { display: flex; flex-direction: column; gap: 14px; padding: 22px 16px 14px 24px; border-radius: 30px;
-    background: linear-gradient(180deg, rgba(255,255,255,0.055), rgba(255,255,255,0.015)), #0a0a0c;
-    box-shadow: inset 0 0 0 1px rgba(255,255,255,0.09), inset 0 1px 0 rgba(255,255,255,0.08), 0 0 0 7px rgba(255,255,255,0.025), 0 0 0 8px rgba(255,255,255,0.05), 0 50px 100px -50px rgba(94,234,176,0.25);
+    background: linear-gradient(180deg, rgba(255,255,255,0.07), rgba(255,255,255,0.02)), #111115;
+    box-shadow: inset 0 0 0 1px rgba(255,255,255,0.16), inset 0 1px 0 rgba(255,255,255,0.14), 0 0 0 7px rgba(255,255,255,0.04), 0 0 0 8px rgba(255,255,255,0.11), 0 50px 100px -50px rgba(94,234,176,0.3);
     transition: box-shadow 360ms ${EASE_OUT}; }
   .cb-home-box:focus-within { box-shadow: inset 0 0 0 1px rgba(94,234,176,0.45), inset 0 1px 0 rgba(255,255,255,0.08), 0 0 0 7px rgba(94,234,176,0.06), 0 0 0 8px rgba(94,234,176,0.2), 0 50px 100px -50px rgba(94,234,176,0.35); }
   .cb-home-box textarea { width: 100%; resize: none; border: 0; outline: none; background: transparent; color: #ededef;
@@ -42,7 +42,7 @@ injectCss(
   .cb-home-links { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; }
   @media (max-width: 900px) { .cb-home-links { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
   .cb-home-link { all: unset; box-sizing: border-box; cursor: pointer; display: flex; flex-direction: column; gap: 10px; padding: 16px; border-radius: 22px;
-    background: linear-gradient(180deg, rgba(255,255,255,0.04), rgba(255,255,255,0.01)); box-shadow: inset 0 0 0 1px rgba(255,255,255,0.06), inset 0 1px 0 rgba(255,255,255,0.05);
+    background: linear-gradient(180deg, rgba(255,255,255,0.06), rgba(255,255,255,0.02)), #101014; box-shadow: inset 0 0 0 1px rgba(255,255,255,0.11), inset 0 1px 0 rgba(255,255,255,0.12), 0 12px 30px -20px rgba(0,0,0,0.9);
     transition: transform 420ms ${EASE_OUT}, box-shadow 320ms ${EASE_OUT}; }
   .cb-home-link:focus-visible { outline: 2px solid #5eeab0; outline-offset: 3px; }
   .cb-home-link:active { transform: scale(0.98); }
@@ -117,9 +117,9 @@ function Suggestions({ onGo }: { onGo: (d: Destination, text?: string) => void }
       <div className="cb-bezel">
         <div className="cb-core" style={{ padding: 0 }}>
           {items.map((s, i) => (
-            <div key={s.key} style={{ display: "flex", gap: 16, alignItems: "center", flexWrap: "wrap", padding: "16px 20px", borderBottom: i < items.length - 1 ? "1px solid rgba(255,255,255,0.05)" : "none" }}>
+            <div key={s.key} style={{ display: "flex", gap: 16, alignItems: "center", flexWrap: "wrap", padding: "16px 20px", borderBottom: i < items.length - 1 ? "1px solid rgba(255,255,255,0.09)" : "none" }}>
               <div style={{ flex: "1 1 280px", minWidth: 0, display: "flex", flexDirection: "column", gap: 3 }}>
-                <span style={{ fontSize: 14, fontWeight: 500, color: pal.text, overflowWrap: "anywhere" }}>{s.title}</span>
+                <span style={{ fontSize: 14, fontWeight: 600, color: pal.text, overflowWrap: "anywhere" }}>{s.title}</span>
                 <span style={{ fontSize: 12.5, color: pal.textSecondary, lineHeight: 1.5 }}>{s.reason}</span>
                 {s.learned ? <span style={{ fontSize: 11.5, color: pal.accentText }}>{s.learned}</span> : null}
               </div>
@@ -301,7 +301,7 @@ export function HomeScreen({ facts, onGo }: { facts: HomeFacts; onGo: (d: Destin
                 {count ? <span style={{ fontSize: 12, color: pal.textSecondary, fontVariantNumeric: "tabular-nums" }}>{count}</span> : null}
               </span>
               <span style={{ display: "flex", flexDirection: "column", gap: 2 }}>
-                <span style={{ fontSize: 14, fontWeight: 500, color: pal.text }}>{label}</span>
+                <span style={{ fontSize: 14.5, fontWeight: 600, color: pal.text }}>{label}</span>
                 <span style={{ fontSize: 12.5, color: pal.textSecondary }}>{detail}</span>
               </span>
             </button>

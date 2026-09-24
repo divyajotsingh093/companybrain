@@ -26,7 +26,7 @@ const TYPE_COLOR: Record<MemoryType, string> = { user: "#8ff2c9", feedback: "#f5
 
 function Editor({ start, purposes, onDone, seed }: { start: MemoryEntry | null; purposes: Record<string, string>; onDone: (saved: boolean) => void; seed?: string }): JSX.Element {
   const [type, setType] = useState<MemoryType>(start?.memory.type ?? "topic");
-  const [name, setName] = useState(start?.name ?? (seed ? seed.split(/\s+/).slice(0, 6).join(" ").replace(/[.,;:!?]+$/, "") : ""));
+  const [name, setName] = useState(start?.name ?? (!seed ? "" : seed.length <= 80 && !seed.includes("\n") ? seed.trim() : seed.split(/\s+/).slice(0, 6).join(" ").replace(/[.,;:!?]+$/, "")));
   const [description, setDescription] = useState(start?.memory.description ?? seed?.split("\n")[0]?.slice(0, 160) ?? "");
   const [fact, setFact] = useState(start?.memory.fact ?? seed ?? "");
   const [why, setWhy] = useState(start?.memory.why ?? "");
