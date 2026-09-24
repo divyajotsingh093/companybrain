@@ -6,7 +6,7 @@ import { createHash, randomBytes } from "node:crypto";
 import type { AccessChecker } from "./access.ts";
 import { canModerate, canUseBoard } from "./access.ts";
 import { answerQuestion, gatewayModel, indexRepo, type Model, modelName, readHistory, titleOf } from "./brain.ts";
-import { GATEWAY_NAME, gatewayUrlProblem, MAX_GATEWAYS, openUpstream, sealGatewayToken } from "./gateway.ts";
+import { GATEWAY_NAME, gatewayUrlProblem, MAX_GATEWAYS, openUpstream, publicFetch, sealGatewayToken } from "./gateway.ts";
 import type { Auth, Principal } from "./auth.ts";
 import type { Config } from "./config.ts";
 import { assertRepo, exchangeCode, type Fetch, type GitHubClient, GitHubError } from "./github.ts";
@@ -453,7 +453,7 @@ export function createApp(deps: AppDeps): Hono {
 
   const upstreamFor = (uid: number) => async (name: string) => {
     const g = await store.gateway(uid, name);
-    return g ? openUpstream({ url: g.url, sealedToken: g.tokenSealed, secret: config.secret, fetch: deps.gatewayFetch ?? fetch }) : null;
+    return g ? openUpstream({ url: g.url, sealedToken: g.tokenSealed, secret: config.secret, fetch: deps.gatewayFetch ?? publicFetch }) : null;
   };
 
   app.get("/api/app/gateway", async (c) => {
@@ -483,7 +483,7 @@ export function createApp(deps: AppDeps): Hono {
     const tokenSealed = token ? sealGatewayToken(config.secret, token) : null;
     let tools: number;
     try {
-      const upstream = await openUpstream({ url, sealedToken: tokenSealed, secret: config.secret, fetch: deps.gatewayFetch ?? fetch });
+      const upstream = await openUpstream({ url, sealedToken: tokenSealed, secret: config.secret, fetch: deps.gatewayFetch ?? publicFetch });
       try {
         tools = (await upstream.tools()).length;
       } finally {
@@ -492,7 +492,7 @@ export function createApp(deps: AppDeps): Hono {
     } catch (err) {
       return c.json({ error: "unreachable", message: cleanLine(err instanceof Error ? err.message : "unknown error", 300) }, 400);
     }
-    if (!(await store.putGateway(principal.uid, { name, url, tokenSealed }, MAX_GATEWAYS))) return c.json({ error: "too_many" }, 409);
+    if (!(await store.putGateway(principal.uid, { name, url: new URL(url).href, tokenSealed }, MAX_GATEWAYS))) return c.json({ error: "too_many" }, 409);
     return c.json({ ok: true, name, tools });
   });
 
@@ -500,7 +500,7 @@ export function createApp(deps: AppDeps): Hono {
     const principal = await session(c);
     if (!principal) return c.json({ error: "sign_in" }, 401);
     if (!sameOrigin(c)) return c.json({ error: "blocked" }, 403);
-    if (!(await store.deleteGateway(principal.uid, c.req.query("name") ?? ""))) return c.json({ error: "not_found" }, 404);
+    if (!(await store.deleteGateway(principal.uid, (c.req.query("name") ?? "").toLowerCase()))) return c.json({ error: "not_found" }, 404);
     return c.json({ ok: true });
   });
 

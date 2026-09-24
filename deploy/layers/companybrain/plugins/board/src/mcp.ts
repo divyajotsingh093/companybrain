@@ -77,6 +77,8 @@ export const TOOL_NAMES: ReadonlySet<string> = new Set([
   "work_update",
 ]);
 
+const GATEWAY_CALLS_PER_MINUTE = 30;
+
 export const NO_ACCESS = "Not found, or you do not have access.";
 export const NO_BOARD = "No board access for this repository. Board access requires triage, write, maintain or admin permission on it.";
 
@@ -634,10 +636,13 @@ export function createBoardServer(deps: BoardDeps): McpServer {
       }),
   );
 
-  const serverArg = z.string().regex(GATEWAY_NAME).describe("Gateway server name, from gateway_servers");
+  const serverArg = z.string().min(1).max(40).describe("Gateway server name, from gateway_servers");
   const NO_SERVER = "No gateway server by that name. Connected servers are listed by gateway_servers; add more on Company Brain under Gateway.";
 
-  async function throughGateway<T>(name: string, run: (upstream: Upstream) => Promise<T>): Promise<T | null> {
+  async function throughGateway<T>(raw: string, run: (upstream: Upstream) => Promise<T>): Promise<T | null> {
+    const name = raw.toLowerCase();
+    if (!GATEWAY_NAME.test(name)) return null;
+    if ((await store.hit(`gateway:${principal.uid}`, 60_000)) > GATEWAY_CALLS_PER_MINUTE) throw new Error("Too many gateway calls. Wait a minute.");
     const upstream = await deps.upstream(name);
     if (!upstream) return null;
     try {
@@ -657,7 +662,7 @@ export function createBoardServer(deps: BoardDeps): McpServer {
       guard(async () => {
         const servers = await store.listGateways(principal.uid);
         if (!servers.length) return text(`No gateway servers connected yet. The person can add one at ${publicUrl}/app under Gateway.`);
-        return text(servers.map((g) => `- ${g.name}: ${g.url}`).join("\n"));
+        return text(createFence().wrap("gateway:servers", servers.map((g) => `- ${g.name}: ${new URL(g.url).origin}${new URL(g.url).pathname}`).join("\n")));
       }),
   );
 
