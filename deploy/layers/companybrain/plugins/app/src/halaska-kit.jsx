@@ -22,8 +22,8 @@ import { useState, useRef, useEffect, useCallback, createContext, useContext, Fr
 // ─── GLOBAL STYLES (injected once) ────────────────────────────
 
 const GLOBAL_STYLES = `
-  @media (max-width: 719px) { html, body { overflow-x: hidden; } }
 @import url('https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700&family=Geist+Mono:wght@400;500&display=swap');
+  @media (max-width: 719px) { html, body { overflow-x: hidden; } }
 
 @keyframes halaska-blink { 0%,100% { opacity:1 } 50% { opacity:0 } }
 @keyframes halaska-spin { to { transform: rotate(360deg) } }
