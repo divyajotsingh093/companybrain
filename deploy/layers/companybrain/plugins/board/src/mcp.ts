@@ -773,7 +773,7 @@ export function createBoardServer(deps: BoardDeps): McpServer {
             return next.body;
           },
         });
-        if (full) return failure(`${part} already holds the most learnings it can. Consolidate it with brain_write kind skill, then try again.`);
+        if (full || (!result.ok && result.reason === "too_long")) return failure(`${full ? part : "This skill"} is full. Consolidate it with brain_write kind skill, then try again. Nothing was added.`);
         if (!result.ok) return failure(result.reason === "entry_quota" ? `There are already ${MAX_ENTRIES_PER_KIND} skills.` : "That name cannot be used.");
         return text(`Learned into ${part} of ${result.entry.name}.`);
       }),

@@ -13,7 +13,7 @@ import { assertRepo, exchangeCode, type Fetch, type GitHubClient, GitHubError } 
 import type { RateLimiter } from "./limits.ts";
 import { APP_JS_BASE64 } from "./app-bundle.ts";
 import { createBoardServer, describeError, TOOL_NAMES } from "./mcp.ts";
-import { quietly, seedHarnessSkill, seedPerson, seedProject, seedReference } from "./seed.ts";
+import { forgetReference, quietly, seedHarnessSkill, seedPerson, seedProject, seedReference } from "./seed.ts";
 import { isMemoryType, MEMORY_PURPOSE, parseMemory, renderMemory } from "./memory.ts";
 import { PART_PURPOSE, parseSkill, pulse, renderSkill, SKILL_PARTS, STALE_AFTER_MS } from "./skills.ts";
 import { cleanLine, cleanText } from "./untrusted.ts";
@@ -46,6 +46,7 @@ const REINDEX_AFTER_MS = 20 * 3_600_000;
 const REINDEX_BATCH = 50;
 const REINDEX_GIVE_UP_MS = 30 * 24 * 3_600_000;
 const ASK_PER_DAY = 200;
+const SEED_WAIT_MS = 3_000;
 const REINDEX_BUDGET_MS = 150_000;
 const INDEX_PER_MINUTE = 6;
 const CSP = "default-src 'none'; style-src 'unsafe-inline'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'";
@@ -132,11 +133,14 @@ export function createApp(deps: AppDeps): Hono {
     if (!issued) {
       return c.html(renderMessage("Token limit reached", `You have ${ACTIVE_AGENT_TOKENS_PER_USER} active agent tokens. Revoke one before creating another.`), 429);
     }
-    await quietly("person", async () => {
-      const repos = (await githubFor(await auth.githubToken(principal.uid)).listRepos(12)).map((r) => r.fullName);
-      await seedPerson(store, principal.uid, principal.login, repos);
-      await weaveHarness(principal.uid, principal.login, repos);
-    });
+    await Promise.race([
+      quietly("person", async () => {
+        const repos = (await githubFor(await auth.githubToken(principal.uid)).listRepos(12)).map((r) => r.fullName);
+        await seedPerson(store, principal.uid, principal.login, repos);
+        await weaveHarness(principal.uid, principal.login, repos);
+      }),
+      new Promise((resolve) => setTimeout(resolve, SEED_WAIT_MS)),
+    ]);
     return c.html(renderTokenCreated({ login: principal.login, client, token: issued.token, mcpUrl, expiresAt: issued.row.expiresAt }));
   });
 
@@ -552,7 +556,12 @@ export function createApp(deps: AppDeps): Hono {
     const principal = await session(c);
     if (!principal) return c.json({ error: "sign_in" }, 401);
     if (!sameOrigin(c)) return c.json({ error: "blocked" }, 403);
-    if (!(await store.deleteGateway(principal.uid, (c.req.query("name") ?? "").toLowerCase()))) return c.json({ error: "not_found" }, 404);
+    const name = (c.req.query("name") ?? "").toLowerCase();
+    if (!(await store.deleteGateway(principal.uid, name))) return c.json({ error: "not_found" }, 404);
+    await quietly("reference", async () => {
+      await forgetReference(store, principal.uid, name);
+      await weaveHarness(principal.uid, principal.login);
+    });
     return c.json({ ok: true });
   });
 
@@ -759,7 +768,7 @@ export function createApp(deps: AppDeps): Hono {
           const args = (call.params?.arguments ?? {}) as { repo?: unknown; post_id?: unknown; server?: unknown; tool?: unknown; name?: unknown };
           const tool = String(call.params?.name ?? "");
           const gatewayTarget = typeof args.server === "string" ? `${args.server}:${typeof args.tool === "string" ? args.tool : "tools"}` : null;
-          const named = typeof args.name === "string" && (tool.startsWith("skill_") || tool === "memory_save") ? `${tool.startsWith("skill_") ? "skill" : "memory"}:${args.name}` : null;
+          const named = typeof args.name === "string" && (tool.startsWith("skill_") || tool === "memory_save") ? `${tool.startsWith("skill_") ? "skill" : "memory"}:${cleanLine(args.name, MAX_ENTRY_NAME)}` : null;
           const subject = typeof args.repo === "string" ? args.repo : typeof args.post_id === "string" ? args.post_id : (gatewayTarget ?? named);
           if (TOOL_NAMES.has(tool)) await store
             .audit({

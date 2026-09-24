@@ -118,3 +118,53 @@ test("editing a skill in the app keeps what agents learned, and shows its heartb
   const later = (await (await json(h, "/api/app/skill?name=Triage", await sessionCookie(h, "gh-alice"))).json()) as { pulse: { state: string } };
   assert.equal(later.pulse.state, "stale");
 });
+
+test("learning into a full skill is refused instead of cutting off its last parts", async (t) => {
+  const h = await buildApp();
+  const cookie = await sessionCookie(h, "gh-alice");
+  const agent = await connectAgent(t, h, await agentToken(h, "gh-alice", "claude_code"));
+  const parts = Object.fromEntries(SKILL_PARTS.map((p) => [p, ""]));
+  await json(h, "/api/app/brain", cookie, "POST", { kind: "skill", name: "Big", parts: { ...parts, Plugins: "Written by a person." } });
+
+  let refused = 0;
+  for (let i = 0; i < 40; i += 1) {
+    const r = await call(agent, "skill_learn", { name: "Big", part: "Soul", learned: `${i} ${"x".repeat(580)}` });
+    if (r.isError) refused += 1;
+  }
+  assert.ok(refused > 0, "once the skill is full, learning is refused");
+  const view = (await (await json(h, "/api/app/skill?name=Big", cookie)).json()) as { parts: Record<string, { text: string; learned: unknown[] }> };
+  assert.equal(view.parts.Plugins?.text, "Written by a person.", "nothing at the end of the skill is lost");
+  assert.equal(view.parts.Soul?.learned.length, 40 - refused, "every learning that was accepted is still there");
+
+  const huge = await json(h, "/api/app/brain", cookie, "POST", { kind: "skill", name: "Big", parts: { ...parts, Process: "y".repeat(30_000) } });
+  assert.equal(huge.status, 400, "an oversized edit from the app is refused, not truncated");
+  assert.equal((await huge.json()).error, "too_long");
+});
+
+test("attaching again never overwrites what a person or agent wrote", async (t) => {
+  const h = await buildApp();
+  const cookie = await sessionCookie(h, "gh-alice");
+  const form = { "content-type": "application/x-www-form-urlencoded" };
+  const attach = () => h.app.fetch(new Request(`${ORIGIN}/tokens`, { method: "POST", headers: { ...form, cookie, origin: ORIGIN }, body: "client=claude_code" }));
+  await attach();
+
+  const parts = Object.fromEntries(SKILL_PARTS.map((p) => [p, ""]));
+  await json(h, "/api/app/brain", cookie, "POST", { kind: "skill", name: HARNESS_SKILL, parts: { ...parts, Tools: "Our own tool notes.", Connectors: "- gateway:mine" } });
+
+  const agent = await connectAgent(t, h, await agentToken(h, "gh-alice", "codex"));
+  const seeded = (await call(agent, "brain_read", { kind: "memory", name: "About alice" })).text;
+  assert.match(seeded, /source: auto/);
+  await call(agent, "brain_write", { kind: "memory", name: "About alice", body: "---\ntype: user\ndescription: CTO\nsource: auto\n---\n\nAlice is the CTO and owns billing." });
+
+  await attach();
+  const brain = (await (await json(h, "/api/app/brain", cookie)).json()) as {
+    kinds: { memory: Array<{ name: string; memory: { fact: string; auto: boolean } }>; skill: Array<{ name: string; skill: Record<string, { text: string }> }> };
+  };
+  const about = brain.kinds.memory.find((m) => m.name === "About alice");
+  assert.equal(about?.memory.fact, "Alice is the CTO and owns billing.", "an agent's edit to an automatic memory makes it theirs");
+  assert.equal(about?.memory.auto, false);
+  const harness = brain.kinds.skill.find((s) => s.name === HARNESS_SKILL);
+  assert.equal(harness?.skill.Tools?.text, "Our own tool notes.");
+  assert.equal(harness?.skill.Connectors?.text, "- gateway:mine");
+  assert.match(harness?.skill.Plugins?.text ?? "", /^Kept up to date by Company Brain/, "parts nobody edited keep updating");
+});

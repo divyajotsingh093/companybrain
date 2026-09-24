@@ -3,6 +3,8 @@ import { parseSkill, renderSkill, type SkillParts } from "./skills.ts";
 import type { Store } from "./store.ts";
 
 export const HARNESS_SKILL = "Working with Company Brain";
+export const KEPT_UP_TO_DATE = "Kept up to date by Company Brain. Edit this part and it stops updating.";
+const MAX_AUTO_PROJECTS = 50;
 
 const firstSentence = (text: string): string =>
   (text
@@ -32,6 +34,9 @@ export async function seedPerson(store: Store, uid: number, login: string, repos
 }
 
 export async function seedProject(store: Store, uid: number, repo: string, docs: Array<{ path: string; title: string; body: string }>): Promise<void> {
+  const memories = await store.listEntries("memory", uid);
+  const autoProjects = memories.filter((e) => parseMemory(e.body).auto && parseMemory(e.body).type === "project");
+  if (!memories.some((e) => e.name === repo) && autoProjects.length >= MAX_AUTO_PROJECTS) return;
   const readme = docs.find((d) => /^readme/i.test(d.path.split("/").pop() ?? ""));
   const about = readme ? firstSentence(readme.body) : "";
   await autoMemory(store, uid, repo, {
@@ -48,11 +53,19 @@ export async function seedReference(store: Store, uid: number, server: string, u
   await autoMemory(store, uid, `${server} gateway server`, {
     type: "reference",
     description: `MCP server ${server} at ${where.host}, reachable through the gateway`,
-    fact: `${server} is an MCP server at ${where.origin}${where.pathname}, connected through the Company Brain gateway with ${tools} tools.`,
+    fact: `${server} is an MCP server on ${where.host}, connected through the Company Brain gateway with ${tools} tools.`,
     why: "So agents know this system is available without being told again.",
     how: `List its tools with gateway_tools server=${server}, then call them with gateway_call.`,
   });
 }
+
+export async function forgetReference(store: Store, uid: number, server: string): Promise<void> {
+  const name = `${server} gateway server`;
+  const entry = await store.getEntry("memory", uid, name);
+  if (entry && parseMemory(entry.body).auto) await store.deleteEntry("memory", uid, name);
+}
+
+const kept = (text: string): boolean => text === "" || text.startsWith(KEPT_UP_TO_DATE);
 
 export async function seedHarnessSkill(store: Store, uid: number, opts: { login: string; tools: string[]; repos: string[]; servers: string[]; mcpUrl: string }): Promise<void> {
   await store.putEntry({
@@ -73,9 +86,10 @@ export async function seedHarnessSkill(store: Store, uid: number, opts: { login:
           "4. Save what you learn with memory_save and skill_learn before you finish.",
         ].join("\n");
       }
-      skill.parts.Tools.text = opts.tools.map((t) => `- ${t}`).join("\n");
-      skill.parts.Connectors.text = [...opts.repos.slice(0, 12).map((r) => `- ${r}`), ...opts.servers.map((s) => `- gateway:${s}`)].join("\n");
-      skill.parts.Plugins.text = `- Company Brain MCP server at ${opts.mcpUrl}`;
+      const auto = (lines: string[]): string => [KEPT_UP_TO_DATE, ...lines].join("\n");
+      if (kept(skill.parts.Tools.text)) skill.parts.Tools.text = auto(opts.tools.map((t) => `- ${t}`));
+      if (kept(skill.parts.Connectors.text)) skill.parts.Connectors.text = auto([...opts.repos.slice(0, 12).map((r) => `- ${r}`), ...opts.servers.map((s) => `- gateway:${s}`)]);
+      if (kept(skill.parts.Plugins.text)) skill.parts.Plugins.text = auto([`- Company Brain MCP server at ${opts.mcpUrl}`]);
       return renderSkill(skill);
     },
   });

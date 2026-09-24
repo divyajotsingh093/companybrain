@@ -196,9 +196,11 @@ export interface Post {
   closedAt: number | null;
 }
 
+const disownMemory = (kind: EntryKind, body: string): string => (kind === "memory" ? body.replace(/^(---\n[\s\S]*?)\nsource: auto(?=\n)/, "$1") : body);
+
 export type PutEntryResult =
   | { ok: true; entry: Entry; created: boolean }
-  | { ok: false; reason: "entry_quota" | "empty_name" | "refused" };
+  | { ok: false; reason: "entry_quota" | "empty_name" | "refused" | "too_long" };
 
 export interface NewPost {
   repoId: number;
@@ -964,8 +966,9 @@ export function openStore(db: Database, now: () => number = Date.now) {
       await lock(tx, `entries:${input.ownerUid}:${input.kind}`);
       const at = now();
       const existing = (await tx.query<EntryRow>(`SELECT ${ENTRY_COLS} FROM entries WHERE kind = $1 AND owner_uid = $2 AND name = $3`, [input.kind, input.ownerUid, name])).rows[0];
-      const next = typeof input.body === "string" ? input.body : input.body(existing ? existing.body : null);
+      const next = typeof input.body === "string" ? disownMemory(input.kind, input.body) : input.body(existing ? existing.body : null);
       if (next === null) return { ok: false, reason: "refused" } as const;
+      if (next.length > MAX_ENTRY_BODY) return { ok: false, reason: "too_long" } as const;
       const body = cleanText(next, MAX_ENTRY_BODY);
       if (existing) {
         const updated = await tx.query<EntryRow>(`UPDATE entries SET body = $1, updated_at = $2 WHERE id = $3 RETURNING ${ENTRY_COLS}`, [body, at, existing.id]);
@@ -997,10 +1000,10 @@ export function openStore(db: Database, now: () => number = Date.now) {
   async function skillUsage(uid: number, name: string, since: number): Promise<{ uses: number; tools: Array<{ tool: string; subject: string | null; n: number }> }> {
     const subject = `skill:${cleanLine(name, MAX_ENTRY_NAME)}`.slice(0, 201);
     const [uses, tools] = await Promise.all([
-      first<{ n: number }>(`SELECT COUNT(*)::int AS n FROM audit_log WHERE uid = $1 AND tool = 'skill_read' AND subject = $2 AND at > $3`, [uid, subject, since]),
+      first<{ n: number }>(`SELECT COUNT(*)::int AS n FROM audit_log WHERE uid = $1 AND tool = 'skill_read' AND subject = $2 AND at > $3 AND ok`, [uid, subject, since]),
       rows<{ tool: string; subject: string | null; n: number }>(
-        `WITH reads AS (SELECT token_id, at FROM audit_log WHERE uid = $1 AND tool = 'skill_read' AND subject = $2 AND at > $3 ORDER BY at DESC LIMIT 200)
-         SELECT a.tool, a.subject, COUNT(*)::int AS n FROM audit_log a JOIN reads r ON a.token_id = r.token_id AND a.at >= r.at AND a.at <= r.at + $4
+        `WITH reads AS (SELECT token_id, at FROM audit_log WHERE uid = $1 AND tool = 'skill_read' AND subject = $2 AND at > $3 AND ok ORDER BY at DESC LIMIT 200)
+         SELECT a.tool, a.subject, COUNT(DISTINCT a.id)::int AS n FROM audit_log a JOIN reads r ON a.token_id = r.token_id AND a.at >= r.at AND a.at <= r.at + $4
          WHERE a.uid = $1 AND a.ok AND a.tool NOT IN ('skill_read', 'skill_learn', 'memory_index', 'memory_save', 'whoami') GROUP BY a.tool, a.subject ORDER BY n DESC, a.tool LIMIT 40`,
         [uid, subject, since, SKILL_SESSION_MS],
       ),
