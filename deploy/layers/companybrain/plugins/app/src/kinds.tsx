@@ -1,5 +1,5 @@
 import type { CSSProperties, JSX } from "react";
-import { tokens, usePal } from "./halaska-kit";
+import { tokens, usePal } from "./ui";
 import { EASE, THEME, injectCss } from "./shared";
 
 export const ONTOLOGY = ["project", "memory", "skill", "process", "rule", "lesson", "record", "role"] as const;

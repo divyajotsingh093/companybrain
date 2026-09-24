@@ -23,8 +23,8 @@ export function injectGlobalStyles(pal: Surface): void {
     ::-webkit-scrollbar-thumb { background: ${pal.border}; border-radius: 999px; border: 3px solid ${pal.bg}; }
     ::-webkit-scrollbar-thumb:hover { background: ${pal.accent}; }
     time, [data-numeric] { font-variant-numeric: tabular-nums; }
-    @keyframes cb-screen-in { from { opacity: 0.4; transform: translateY(4px); } }
-    [data-screen] { animation: cb-screen-in 220ms cubic-bezier(0.23, 1, 0.32, 1) both; }
+    @keyframes cb-screen-in { from { opacity: 0; transform: translateY(8px); filter: blur(3px); } }
+    [data-screen] { animation: cb-screen-in 360ms cubic-bezier(0.32, 0.72, 0, 1) both; }
     @media (prefers-reduced-motion: reduce) {
       [data-screen] { animation: none; }
     }

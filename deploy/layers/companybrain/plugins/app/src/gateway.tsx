@@ -1,5 +1,5 @@
 import { useEffect, useState, type JSX } from "react";
-import { AlertBanner, Button, Caption, Card, EmptyState, Heading, ListItem, Skeleton, Stack, Text, TextInput, tokens, usePal } from "./halaska-kit";
+import { AlertBanner, Button, Caption, Card, EmptyState, Heading, ListItem, Skeleton, Stack, Text, TextInput, tokens, usePal } from "./ui";
 import { ApiError, CLIENT_LABEL, THEME, get, post, reason, send, when } from "./shared";
 
 interface GatewayView {
@@ -140,7 +140,7 @@ export function GatewayScreen(): JSX.Element {
               />
               <Stack direction="row" justify="space-between" align="center" gap={12}>
                 <Caption theme={THEME}>{`${view.servers.length} of ${view.max} servers`}</Caption>
-                <Button variant="primary" disabled={!ready} theme={THEME}>
+                <Button variant="primary" arrow disabled={!ready} theme={THEME}>
                   {saving ? "Checking the server" : "Connect server"}
                 </Button>
               </Stack>

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type JSX, type KeyboardEvent, type PointerEvent } from "react";
 import { forceCollide, forceLink, forceManyBody, forceSimulation, forceX, forceY, type Simulation, type SimulationLinkDatum, type SimulationNodeDatum } from "d3-force";
-import { Badge, Button, Caption, Card, CardHeader, Heading, IconButton, Skeleton, Stack, Text, TextInput, tokens, usePal } from "./halaska-kit";
+import { Badge, Button, Caption, Card, CardHeader, Heading, IconButton, Skeleton, Stack, Text, TextInput, tokens, usePal } from "./ui";
 import { GRAPH_KINDS, KindBadge, KindChip, KindDot, kindColor, kindName, kindPurpose } from "./kinds";
 import { EASE, THEME, get, injectCss, reason, useReducedMotion, useWidth } from "./shared";
 

@@ -1,5 +1,5 @@
 import { Fragment, useEffect, useRef, useState, type JSX, type KeyboardEvent, type ReactNode, type RefObject } from "react";
-import { AlertBanner, Button, Caption, Heading, Skeleton, Stack, Text, tokens, usePal } from "./halaska-kit";
+import { AlertBanner, Button, Caption, EASE_OUT, Heading, Skeleton, Stack, Text, tokens, usePal } from "./ui";
 import { ASK_KINDS, KindBadge, KindChip, KindDot, kindColor, kindName } from "./kinds";
 import { ApiError, EASE, ERROR_COPY, THEME, injectCss, post, reason, useReducedMotion, useWidth } from "./shared";
 
@@ -101,11 +101,12 @@ function injectAskStyles(pal: Record<string, string>): void {
     "cb-ask-styles",
     `
     .cb-composer {
-      display: flex; flex-direction: column; gap: 10px; padding: 14px 14px 12px 16px;
-      background: ${pal.bgElevated}; border: 1px solid ${pal.border}; border-radius: 20px;
-      transition: border-color 180ms ${EASE}, box-shadow 180ms ${EASE};
+      display: flex; flex-direction: column; gap: 12px; padding: 18px 14px 12px 20px; margin: 6px;
+      background: linear-gradient(180deg, rgba(255,255,255,0.05), rgba(255,255,255,0.015)), #0a0a0c; border: 0; border-radius: 26px;
+      box-shadow: inset 0 0 0 1px rgba(255,255,255,0.08), inset 0 1px 0 rgba(255,255,255,0.08), 0 0 0 6px rgba(255,255,255,0.025), 0 0 0 7px rgba(255,255,255,0.05), 0 40px 80px -40px rgba(0,0,0,0.9);
+      transition: box-shadow 320ms ${EASE_OUT};
     }
-    .cb-composer:focus-within { border-color: ${pal.accent}88; box-shadow: 0 0 0 4px ${pal.accent}1a; }
+    .cb-composer:focus-within { box-shadow: inset 0 0 0 1px ${pal.accent}73, inset 0 1px 0 rgba(255,255,255,0.08), 0 0 0 6px ${pal.accent}0f, 0 0 0 7px ${pal.accent}33, 0 40px 80px -40px rgba(0,0,0,0.9); }
     .cb-composer textarea {
       width: 100%; box-sizing: border-box; resize: none; border: none; outline: none; background: transparent;
       color: ${pal.text}; font-family: ${tokens.font.sans}; padding: 2px 0; margin: 0;
@@ -128,25 +129,27 @@ function injectAskStyles(pal: Record<string, string>): void {
     .cb-cite[data-on="true"] { background: var(--kind-line); color: ${pal.text}; }
     .cb-cite:active { transform: scale(0.94); }
     .cb-intent {
-      display: flex; flex-direction: column; gap: 6px; text-align: left; padding: 14px; cursor: pointer;
-      border-radius: 14px; border: 1px solid ${pal.borderSubtle}; background: ${pal.bgSubtle}; color: ${pal.text};
+      display: flex; flex-direction: column; gap: 6px; text-align: left; padding: 18px; cursor: pointer;
+      border-radius: 22px; border: 0; background: linear-gradient(180deg, rgba(255,255,255,0.04), rgba(255,255,255,0.01)); color: ${pal.text};
+      box-shadow: inset 0 0 0 1px rgba(255,255,255,0.06), inset 0 1px 0 rgba(255,255,255,0.06);
       font-family: ${tokens.font.sans};
-      transition: transform 140ms ${EASE}, border-color 160ms ${EASE}, background-color 160ms ${EASE};
+      transition: transform 420ms ${EASE_OUT}, box-shadow 320ms ${EASE_OUT}, background-color 320ms ${EASE_OUT};
     }
     .cb-intent:active { transform: scale(0.98); }
     .cb-intent-title { display: flex; align-items: center; gap: 8px; font: 500 14px/1.3 ${tokens.font.sans}; }
     .cb-intent-detail { font: 400 13px/1.45 ${tokens.font.sans}; color: ${pal.textSecondary}; }
     .cb-intent-scope { font: 500 11px/1.3 ${tokens.font.sans}; color: var(--kind-ink); letter-spacing: 0.01em; }
     @media (hover: hover) and (pointer: fine) {
-      .cb-intent:hover { border-color: var(--kind-line); background: var(--kind-wash); }
+      .cb-intent:hover { transform: translateY(-2px); box-shadow: inset 0 0 0 1px var(--kind-line), 0 24px 40px -28px var(--kind-line); background: var(--kind-wash); }
       .cb-send:not(:disabled):hover { background: ${pal.borderFocus}; }
     }
     .cb-source {
-      display: flex; flex-direction: column; gap: 8px; padding: 14px; border-radius: 14px;
-      border: 1px solid ${pal.borderSubtle}; background: ${pal.bgSubtle}; scroll-margin: 24px;
-      transition: border-color 200ms ${EASE}, background-color 200ms ${EASE};
+      display: flex; flex-direction: column; gap: 8px; padding: 16px; border-radius: 20px; border: 0;
+      background: linear-gradient(180deg, rgba(255,255,255,0.04), rgba(255,255,255,0.01)); scroll-margin: 24px;
+      box-shadow: inset 0 0 0 1px rgba(255,255,255,0.06), inset 0 1px 0 rgba(255,255,255,0.05);
+      transition: box-shadow 320ms ${EASE_OUT}, background-color 320ms ${EASE_OUT};
     }
-    .cb-source[data-on="true"] { border-color: var(--kind-line); background: var(--kind-wash); }
+    .cb-source[data-on="true"] { box-shadow: inset 0 0 0 1px var(--kind-line); background: var(--kind-wash); }
     @keyframes cb-turn-in { from { opacity: 0; transform: translateY(6px); } }
     .cb-turn-in { animation: cb-turn-in 260ms ${EASE} both; }
     @media (prefers-reduced-motion: reduce) {
@@ -571,7 +574,7 @@ export function AskScreen({ thread, setThread, canAsk, seed, onOpenGraph, onOpen
           </Stack>
           <Stack direction="row" gap={6}>
             {onOpenGraph ? (
-              <Button variant="ghost" size="sm" theme={THEME} onClick={onOpenGraph}>
+              <Button variant="secondary" size="sm" arrow theme={THEME} onClick={onOpenGraph}>
                 Open the graph
               </Button>
             ) : null}

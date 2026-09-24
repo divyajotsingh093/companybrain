@@ -5,6 +5,7 @@ import { AskScreen, type Turn } from "./ask";
 import { GraphScreen } from "./graph";
 import { FilesSection, UPLOADS } from "./files";
 import { GatewayScreen } from "./gateway";
+import { Shell } from "./shell";
 import { WorkScreen, pendingReviews, type Work } from "./work";
 import { CLIENT_LABEL, ERROR_COPY, get, reason, send, THEME, when } from "./shared";
 import {
@@ -17,7 +18,6 @@ import {
   EmptyState,
   Heading,
   ListItem,
-  Orb,
   Select,
   Skeleton,
   Stack,
@@ -26,10 +26,9 @@ import {
   Text,
   TextArea,
   TextInput,
-  ThemeProvider,
   tokens,
   usePal,
-} from "./halaska-kit";
+} from "./ui";
 
 
 interface Me {
@@ -182,7 +181,7 @@ const NAV_GROUPS: Array<{ group: string | null; items: Screen[] }> = [
   { group: "Judgment", items: ["decisions"] },
 ];
 
-const NARROW_WIDTH = 760;
+const NARROW_WIDTH = 900;
 
 function useNarrow(): boolean {
   const [narrow, setNarrow] = useState(() => typeof window !== "undefined" && window.innerWidth < NARROW_WIDTH);
@@ -192,65 +191,6 @@ function useNarrow(): boolean {
     return () => window.removeEventListener("resize", onResize);
   }, []);
   return narrow;
-}
-
-function Nav({ screen, narrow, onSelect, counts }: { screen: Screen; narrow: boolean; onSelect: (screen: Screen) => void; counts: Partial<Record<Screen, number>> }): JSX.Element {
-  const pal = usePal(THEME);
-  const item = (id: Screen): JSX.Element => (
-    <Button
-      key={id}
-      variant={screen === id ? "secondary" : "ghost"}
-      size="sm"
-      fullWidth={!narrow}
-      theme={THEME}
-      onClick={() => onSelect(id)}
-      style={{ justifyContent: narrow ? "center" : "flex-start", color: screen === id ? pal.accentText : undefined }}
-    >
-      {SCREEN_LABEL[id]}
-      {counts[id] ? (
-        <Badge theme={THEME} style={{ marginLeft: 8 }}>
-          {counts[id]}
-        </Badge>
-      ) : null}
-    </Button>
-  );
-
-  const groups = NAV_GROUPS.map((g) => (
-    <Stack key={g.group ?? "start"} gap={narrow ? 6 : 4} direction={narrow ? "row" : "column"} wrap={narrow} align={narrow ? "center" : undefined}>
-      {g.group ? (
-        <Caption theme={THEME} style={{ padding: narrow ? "0 4px 0 0" : "0 12px" }}>
-          {g.group.toUpperCase()}
-        </Caption>
-      ) : null}
-      {g.items.map(item)}
-    </Stack>
-  ));
-
-  if (narrow) {
-    return (
-      <Stack gap={10} style={{ width: "100%" }}>
-        {groups}
-      </Stack>
-    );
-  }
-
-  return (
-    <Stack
-      gap={16}
-      style={{
-        width: 184,
-        flexShrink: 0,
-        position: "sticky",
-        top: 40,
-        background: pal.bgSubtle,
-        border: `1px solid ${pal.borderSubtle}`,
-        borderRadius: 14,
-        padding: "14px 10px",
-      }}
-    >
-      {groups}
-    </Stack>
-  );
 }
 
 function Overview({ me, onOpen }: { me: Me; onOpen: (repo: string) => void }): JSX.Element {
@@ -1043,32 +983,26 @@ export function App(): JSX.Element {
     return <EntriesScreen key={screen} kind={screen} entries={brain.kinds[screen] ?? []} now={brain.now} limit={brain.limit} onChanged={loadBrain} />;
   };
 
-  return (
-    <ThemeProvider theme={THEME}>
-      <div style={{ background: pal.bg, minHeight: "100vh", padding: "40px 20px 88px" }}>
-        <Stack gap={32} style={{ maxWidth: 1020, margin: "0 auto" }}>
-          <Stack direction="row" gap={12} align="center" justify="space-between" wrap>
-            <Stack direction="row" gap={10} align="center">
-              <Orb variant="orbit" size={26} theme={THEME} />
-              <Heading level={3} theme={THEME}>
-                Company Brain
-              </Heading>
-            </Stack>
-            <Text secondary theme={THEME} style={{ fontFamily: tokens.font.mono }}>
-              {me?.login ?? ""}
-            </Text>
-          </Stack>
+  const eyebrow = board ? "Board" : (NAV_GROUPS.find((g) => g.items.includes(screen))?.group ?? SCREEN_LABEL[screen]);
 
-          <Stack direction={narrow ? "column" : "row"} gap={narrow ? 24 : 32} align="flex-start">
-            <Nav screen={screen} narrow={narrow} onSelect={select} counts={{ decisions: decisions?.open.length ?? 0, work: pendingReviews(work) }} />
-            <Stack gap={32} style={{ flex: 1, minWidth: 0, width: "100%" }}>
-              <div key={board ? "board" : screen} data-screen>
-                {content()}
-              </div>
-            </Stack>
-          </Stack>
-        </Stack>
-      </div>
-    </ThemeProvider>
+  return (
+    <div className="cb-root">
+      <div className="cb-backdrop" aria-hidden />
+      <div className="cb-grain" aria-hidden />
+      <Shell
+        groups={NAV_GROUPS}
+        screen={screen}
+        labels={SCREEN_LABEL}
+        counts={{ decisions: decisions?.open.length ?? 0, work: pendingReviews(work) }}
+        onSelect={select}
+        login={me?.login ?? ""}
+        narrow={narrow}
+        eyebrow={eyebrow}
+      >
+        <div key={board ? "board" : screen} data-screen>
+          {content()}
+        </div>
+      </Shell>
+    </div>
   );
 }

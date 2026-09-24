@@ -239,7 +239,8 @@ export function createApp(deps: AppDeps): Hono {
     c.header("cache-control", "no-store");
     return c.html(
       `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Company Brain</title></head><body><div id="root"></div><script type="module" src="/app/bundle.js"></script></body></html>`,
+<meta name="color-scheme" content="dark"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Geist:wght@300..700&family=Geist+Mono:wght@400;500&display=swap">
+<title>Company Brain</title></head><body style="margin:0;background:#050505"><div id="root"></div><script type="module" src="/app/bundle.js"></script></body></html>`,
     );
   });
 

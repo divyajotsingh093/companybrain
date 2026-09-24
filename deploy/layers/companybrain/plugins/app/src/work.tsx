@@ -1,5 +1,5 @@
 import { useState, type JSX } from "react";
-import { AlertBanner, Button, Caption, Card, EmptyState, Heading, Select, Stack, StatusBadge, Text, TextArea, TextInput, tokens, usePal } from "./halaska-kit";
+import { AlertBanner, Button, Caption, Card, EmptyState, Heading, Select, Stack, StatusBadge, Text, TextArea, TextInput, tokens, usePal } from "./ui";
 import { ApiError, CLIENT_LABEL, EASE, THEME, injectCss, post, reason, when } from "./shared";
 
 export type WorkStatus = "open" | "working" | "review" | "changes" | "done";

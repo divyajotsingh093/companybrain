@@ -1,5 +1,5 @@
 import { useEffect, useState, type DragEvent, type JSX } from "react";
-import { AlertBanner, Button, Caption, Card, EmptyState, Heading, ListItem, Skeleton, Stack, Text, tokens, usePal } from "./halaska-kit";
+import { AlertBanner, Button, Caption, Card, EmptyState, Heading, ListItem, Skeleton, Stack, Text, tokens, usePal } from "./ui";
 import { EASE, THEME, get, injectCss, post, reason, send, when } from "./shared";
 
 export const UPLOADS = "Uploaded files";
