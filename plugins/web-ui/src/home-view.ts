@@ -1,5 +1,5 @@
 import { html, nothing, type TemplateResult } from "lit";
-import { AlertTriangle, ArrowRight, Check, Inbox, type IconNode } from "lucide";
+import { AlertTriangle, ArrowRight, Check, type IconNode } from "lucide";
 import { chip, emptyState, icon, relTime } from "./ui.ts";
 
 export interface HomeItem {
@@ -72,6 +72,11 @@ export interface JourneyStep {
   detail: string;
   done: boolean;
   view: string;
+}
+
+function stepState(done: boolean, isNext: boolean): string {
+  if (done) return "done";
+  return isNext ? "next" : "";
 }
 
 export function journey(data: HomeSummary): JourneyStep[] {
@@ -169,7 +174,7 @@ function journeyTpl(steps: JourneyStep[], onOpen: (view: string) => void): Templ
       </h2>
       <ol class="home-journey">
         ${steps.map(
-          (step, i) => html`<li class="home-journey-step ${step.done ? "done" : i === next ? "next" : ""}">
+          (step, i) => html`<li class="home-journey-step ${stepState(step.done, i === next)}">
             <span class="home-journey-mark">${step.done ? icon(Check, 13) : html`<span>${i + 1}</span>`}</span>
             <button class="home-journey-body" type="button" @click=${() => onOpen(step.view)}>
               <b>${step.label}</b>

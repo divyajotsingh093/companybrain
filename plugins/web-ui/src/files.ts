@@ -180,21 +180,21 @@ function drawFiles(loading = false): void {
           },
         )}
       </div>
-      ${
-        visible.length
-          ? html`<div class="list-rows file-list">${visible.map(fileRow)}</div>`
-          : filtered
-            ? html`<div class="empty compact">No files match these filters.</div>`
-            : emptyState({
-                glyph: Files,
-                headline: "No files yet",
-                body: "Upload one here, or ask the agent to make one for you. Files you own stay yours until you share them.",
-              })
-      }
+      ${filesBody(visible, filtered)}
       ${filesNextCursor ? html`<div class="list-footer"><button class="btn" type="button" ?disabled=${filesLoadingMore} @click=${() => void loadMoreFiles()}>${filesLoadingMore ? "Loading…" : "Load more"}</button></div>` : nothing}
     `,
     filesHost,
   );
+}
+
+function filesBody(visible: FileRow[], filtered: boolean): unknown {
+  if (visible.length) return html`<div class="list-rows file-list">${visible.map(fileRow)}</div>`;
+  if (filtered) return html`<div class="empty compact">No files match these filters.</div>`;
+  return emptyState({
+    glyph: Files,
+    headline: "No files yet",
+    body: "Upload one here, or ask the agent to make one for you. Files you own stay yours until you share them.",
+  });
 }
 
 function fileRow(f: FileRow) {

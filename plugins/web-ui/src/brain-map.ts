@@ -416,6 +416,22 @@ function panelTpl(o: BrainMapTplOpts, skill: MapSkill): TemplateResult {
     </dl>
   </aside>`;
 }
+function emptyTpl(o: BrainMapTplOpts): unknown {
+  if (o.loading) return html`<p class="empty compact">Loading…</p>`;
+  if (o.error) return nothing;
+  return emptyState({
+    glyph: Boxes,
+    headline: "No skills to map",
+    body: "Skills you can see appear here as soon as one exists in a scope you belong to.",
+  });
+}
+
+function bodyTpl(o: BrainMapTplOpts, hubs: Hub[], hub: Hub | undefined): unknown {
+  if (!o.skills.length) return emptyTpl(o);
+  if (hub) return html`${neighbourTpl(hubs, hub, o.onScope)}${treeTpl(o, hub)}`;
+  return constellationTpl(o, hubs);
+}
+
 
 export function brainMapTpl(o: BrainMapTplOpts): TemplateResult {
   const hubs = hubsFor(o.skills);
@@ -441,21 +457,7 @@ export function brainMapTpl(o: BrainMapTplOpts): TemplateResult {
           : nothing}
       </div>
       ${o.error ? html`<div class="brain-error">${icon(AlertTriangle, 16)}<span>${o.error}</span></div>` : nothing}
-      ${
-        !o.skills.length
-          ? o.loading
-            ? html`<p class="empty compact">Loading…</p>`
-            : o.error
-              ? nothing
-              : emptyState({
-                  glyph: Boxes,
-                  headline: "No skills to map",
-                  body: "Skills you can see appear here as soon as one exists in a scope you belong to.",
-                })
-          : hub
-            ? html`${neighbourTpl(hubs, hub, o.onScope)}${treeTpl(o, hub)}`
-            : constellationTpl(o, hubs)
-      }
+      ${bodyTpl(o, hubs, hub)}
       ${selected ? panelTpl(o, selected) : nothing}
     </div>
   `;
