@@ -1,7 +1,7 @@
-import { ArrowUp, Brain, Check, ChatCircleText, Graph, PlugsConnected, Robot, Signpost, Stack as StackIcon, Tray, Wrench } from "@phosphor-icons/react";
+import { ArrowUp, Brain, Check, ChatCircleText, Graph, Lightning, PlugsConnected, Robot, Signpost, Stack as StackIcon, Tray, Wrench } from "@phosphor-icons/react";
 import { useEffect, useRef, useState, type JSX, type KeyboardEvent } from "react";
-import { EASE_OUT, Heading, Stack, Text, usePal } from "./ui";
-import { get, injectCss } from "./shared";
+import { AlertBanner, Button, EASE_OUT, Heading, Stack, Text, usePal } from "./ui";
+import { get, injectCss, post, reason } from "./shared";
 
 export type Destination = "ask" | "graph" | "work" | "sources" | "memory" | "skill" | "agents" | "gateway" | "decisions";
 
@@ -53,6 +53,94 @@ injectCss(
   @media (prefers-reduced-motion: reduce) { .cb-home-box, .cb-home-send, .cb-home-link, .cb-step { transition: none; } }
   `,
 );
+
+interface Suggestion {
+  key: string;
+  kind: string;
+  title: string;
+  reason: string;
+  learned: string | null;
+  action: { type: "open" | "reindex" | "learn"; screen?: string; seed?: string; label: string };
+}
+
+function Suggestions({ onGo }: { onGo: (d: Destination, text?: string) => void }): JSX.Element | null {
+  const pal = usePal();
+  const [items, setItems] = useState<Suggestion[] | null>(null);
+  const [choices, setChoices] = useState(0);
+  const [busy, setBusy] = useState<string | null>(null);
+  const [notice, setNotice] = useState<{ ok: boolean; text: string } | null>(null);
+
+  const load = (): void => {
+    void get<{ suggestions: Suggestion[]; choices: number }>("/api/app/suggestions").then(
+      (r) => {
+        setItems(r.suggestions.slice(0, 3));
+        setChoices(r.choices);
+      },
+      () => setItems([]),
+    );
+  };
+
+  useEffect(load, []);
+
+  const choose = async (s: Suggestion, verdict: "accepted" | "snoozed" | "dismissed"): Promise<void> => {
+    setBusy(s.key);
+    setNotice(null);
+    try {
+      await post("/api/app/suggestions", { key: s.key, verdict });
+      if (verdict === "accepted" && s.action.type === "open" && s.action.screen) {
+        onGo(s.action.screen as Destination, s.action.seed);
+        return;
+      }
+      if (verdict === "accepted") setNotice({ ok: true, text: s.action.type === "reindex" ? "Refreshed." : "Added to the skill." });
+      load();
+    } catch (err) {
+      setNotice({ ok: false, text: reason(err) });
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  if (!items?.length) return notice ? <AlertBanner variant={notice.ok ? "success" : "danger"} title={notice.text} /> : null;
+
+  return (
+    <Stack gap={12}>
+      <Stack direction="row" justify="space-between" align="center" gap={12} wrap>
+        <span className="cb-eyebrow">
+          <Lightning size={11} weight="fill" color={pal.accent} />
+          Suggested for you
+        </span>
+        <Text secondary size="sm" style={{ color: pal.textTertiary }}>
+          {choices ? choices === 1 ? "Learned from 1 choice so far" : `Learned from ${choices} choices so far` : "Gets sharper with every choice you make"}
+        </Text>
+      </Stack>
+      {notice ? <AlertBanner variant={notice.ok ? "success" : "danger"} title={notice.text} /> : null}
+      <div className="cb-bezel">
+        <div className="cb-core" style={{ padding: 0 }}>
+          {items.map((s, i) => (
+            <div key={s.key} style={{ display: "flex", gap: 16, alignItems: "center", flexWrap: "wrap", padding: "16px 20px", borderBottom: i < items.length - 1 ? "1px solid rgba(255,255,255,0.05)" : "none" }}>
+              <div style={{ flex: "1 1 280px", minWidth: 0, display: "flex", flexDirection: "column", gap: 3 }}>
+                <span style={{ fontSize: 14, fontWeight: 500, color: pal.text, overflowWrap: "anywhere" }}>{s.title}</span>
+                <span style={{ fontSize: 12.5, color: pal.textSecondary, lineHeight: 1.5 }}>{s.reason}</span>
+                {s.learned ? <span style={{ fontSize: 11.5, color: pal.accentText }}>{s.learned}</span> : null}
+              </div>
+              <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                <Button variant="ghost" size="sm" disabled={busy === s.key} onClick={() => void choose(s, "dismissed")}>
+                  Don't suggest this
+                </Button>
+                <Button variant="ghost" size="sm" disabled={busy === s.key} onClick={() => void choose(s, "snoozed")}>
+                  Not now
+                </Button>
+                <Button variant="primary" size="sm" arrow disabled={busy === s.key} onClick={() => void choose(s, "accepted")}>
+                  {busy === s.key ? "Working" : s.action.label}
+                </Button>
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+    </Stack>
+  );
+}
 
 function Journey({ facts, gateways, onGo }: { facts: HomeFacts; gateways: number | null; onGo: (d: Destination) => void }): JSX.Element | null {
   const pal = usePal();
@@ -198,6 +286,8 @@ export function HomeScreen({ facts, onGo }: { facts: HomeFacts; onGo: (d: Destin
           Enter to {mode.send.toLowerCase()}, Shift and Enter for a new line.
         </Text>
       </Stack>
+
+      <Suggestions onGo={onGo} />
 
       <Journey facts={facts} gateways={gateways} onGo={(d) => onGo(d)} />
 

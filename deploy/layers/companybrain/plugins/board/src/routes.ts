@@ -15,7 +15,8 @@ import { APP_JS_BASE64 } from "./app-bundle.ts";
 import { createBoardServer, describeError, TOOL_NAMES } from "./mcp.ts";
 import { forgetReference, quietly, seedHarnessSkill, seedPerson, seedProject, seedReference } from "./seed.ts";
 import { isMemoryType, MEMORY_PURPOSE, parseMemory, renderMemory } from "./memory.ts";
-import { PART_PURPOSE, parseSkill, pulse, renderSkill, SKILL_PARTS, STALE_AFTER_MS } from "./skills.ts";
+import { learnInto, PART_PURPOSE, parseSkill, pulse, renderSkill, SKILL_PARTS, STALE_AFTER_MS } from "./skills.ts";
+import { candidates, rank, type Signals } from "./suggest.ts";
 import { cleanLine, cleanText } from "./untrusted.ts";
 import { ACTIVE_AGENT_TOKENS_PER_USER, ENTRY_KINDS, KIND_PURPOSE, MAX_DOC_BODY, MAX_ENTRY_BODY, MAX_ENTRY_NAME, MAX_UPLOAD_NAME, type Store } from "./store.ts";
 import { hashToken, isAgentClient, seal, unseal } from "./token.ts";
@@ -296,6 +297,8 @@ export function createApp(deps: AppDeps): Hono {
     }
   });
 
+  const jsonLimit = bodyLimit({ maxSize: 64 * 1024, onError: (c) => c.json({ error: "too_large" }, 413) });
+
   app.get("/api/app/brain", async (c) => {
     const principal = await session(c);
     if (!principal) return c.json({ error: "sign_in" }, 401);
@@ -308,6 +311,85 @@ export function createApp(deps: AppDeps): Hono {
       }),
     );
     return c.json({ kinds: Object.fromEntries(kinds), limit: APP_ENTRY_LIMIT, memoryTypes: MEMORY_PURPOSE, skillParts: PART_PURPOSE, now: now() });
+  });
+
+  const gatherSignals = async (principal: Principal): Promise<Signals> => {
+    const read = canRead(principal);
+    const since = now() - STALE_AFTER_MS;
+    const [tasks, open, unanswered, missing, sources, skills, gateways, reads] = await Promise.all([
+      store.requestsBy(principal.uid),
+      store.openDecisions(principal.uid),
+      store.unansweredQuestions(principal.uid, since),
+      store.missingEntries(principal.uid),
+      store.sources(principal.uid),
+      store.listEntries("skill", principal.uid, 50),
+      store.listGateways(principal.uid),
+      store.recentSkillReads(principal.uid, since),
+    ]);
+    const visible = async <T extends { repoId: number; repoName: string }>(posts: T[]): Promise<T[]> => {
+      const ok = await Promise.all(posts.map((p) => read(p.repoName, p.repoId)));
+      return posts.filter((_, i) => ok[i]);
+    };
+    const observed = await Promise.all(reads.map(async (skill) => ({ skill, tools: (await store.skillUsage(principal.uid, skill, since)).tools })));
+    return {
+      now: now(),
+      reviews: await visible(tasks.filter((t) => t.status === "review")),
+      decisions: await visible(open),
+      unanswered,
+      missing,
+      sources,
+      skills: skills.map((e) => ({ name: e.name, body: e.body, updatedAt: e.updatedAt })),
+      gateways: gateways.map((g) => g.name),
+      observed,
+    };
+  };
+
+  app.get("/api/app/suggestions", async (c) => {
+    const principal = await session(c);
+    if (!principal) return c.json({ error: "sign_in" }, 401);
+    const [signals, history] = await Promise.all([gatherSignals(principal), store.suggestionHistory(principal.uid)]);
+    const choices = history.stats.reduce((n, s) => n + s.n, 0);
+    return c.json({ suggestions: rank(candidates(signals), history, now()), choices, now: now() });
+  });
+
+  app.post("/api/app/suggestions", jsonLimit, async (c) => {
+    const principal = await session(c);
+    if (!principal) return c.json({ error: "sign_in" }, 401);
+    if (!sameOrigin(c)) return c.json({ error: "blocked" }, 403);
+    let payload: { key?: unknown; verdict?: unknown };
+    try {
+      payload = await c.req.json();
+    } catch {
+      return c.json({ error: "bad_json" }, 400);
+    }
+    const verdict = payload.verdict === "accepted" || payload.verdict === "snoozed" || payload.verdict === "dismissed" ? payload.verdict : null;
+    if (typeof payload.key !== "string" || !verdict) return c.json({ error: "bad_fields" }, 400);
+    const found = candidates(await gatherSignals(principal)).find((s) => s.key === payload.key);
+    if (!found) return c.json({ error: "not_found" }, 404);
+    if (verdict === "accepted" && found.action.type === "reindex") {
+      if ((await store.hit(`index:${principal.uid}`, 60_000)) > INDEX_PER_MINUTE) return c.json({ error: "rate_limited" }, 429);
+      try {
+        if (!(await indexFor(principal.uid, principal.login, found.action.repo))) return c.json({ error: "no_access" }, 404);
+      } catch (err) {
+        if (err instanceof GitHubError) return c.json({ error: "github", message: describeError(err, config.publicUrl) }, 200);
+        return c.json({ error: "no_access" }, 404);
+      }
+    }
+    if (verdict === "accepted" && found.action.type === "learn") {
+      const { skill, part, note } = found.action;
+      const result = await store.putEntry({
+        kind: "skill",
+        ownerUid: principal.uid,
+        name: skill,
+        body: (current) => {
+          const next = learnInto(current ?? "", part, note, "company-brain", now());
+          return "full" in next ? null : next.body;
+        },
+      });
+      if (!result.ok) return c.json({ error: result.reason === "too_long" || result.reason === "refused" ? "too_long" : result.reason }, 400);
+    }
+    await store.recordSuggestion(principal.uid, found.kind, found.key, verdict);
+    return c.json({ ok: true, action: found.action });
   });
 
   app.get("/api/app/skill", async (c) => {
@@ -335,7 +417,6 @@ export function createApp(deps: AppDeps): Hono {
     });
   });
 
-  const jsonLimit = bodyLimit({ maxSize: 64 * 1024, onError: (c) => c.json({ error: "too_large" }, 413) });
 
   const model = deps.model ?? gatewayModel(process.env, deps.fetch ?? fetch);
 
@@ -619,6 +700,9 @@ export function createApp(deps: AppDeps): Hono {
       for (const l of links.incoming) related.set(l.fromName.toLowerCase(), { kind: l.fromKind, name: l.fromName });
     }
     for (const f of found) related.delete(f.title.toLowerCase());
+    if (!found.length) {
+      await store.audit({ uid: principal.uid, tokenId: "web", client: "web", tool: "ask", subject: cleanLine(payload.question, 201), ok: false }).catch(() => undefined);
+    }
     try {
       const answer = await answerQuestion({ question: payload.question, found, model, history });
       return c.json({ ...answer, related: [...related.values()].slice(0, 8) });

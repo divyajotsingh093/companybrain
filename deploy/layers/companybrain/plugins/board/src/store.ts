@@ -499,6 +499,15 @@ const SCHEMA = `
   DROP INDEX IF EXISTS documents_search;
   ALTER TABLE documents ADD COLUMN IF NOT EXISTS search tsvector GENERATED ALWAYS AS (to_tsvector('english', title || ' ' || body)) STORED;
   CREATE INDEX IF NOT EXISTS documents_search_v2 ON documents USING GIN (search);
+  CREATE TABLE IF NOT EXISTS suggestion_events (
+    id BIGSERIAL PRIMARY KEY,
+    uid BIGINT NOT NULL,
+    kind TEXT NOT NULL,
+    key TEXT NOT NULL,
+    verdict TEXT NOT NULL CHECK (verdict IN ('accepted', 'snoozed', 'dismissed')),
+    at BIGINT NOT NULL
+  );
+  CREATE INDEX IF NOT EXISTS suggestion_events_uid ON suggestion_events (uid, key, at);
   CREATE TABLE IF NOT EXISTS gateway_servers (
     owner_uid BIGINT NOT NULL,
     name TEXT NOT NULL,
@@ -587,7 +596,7 @@ export function openStore(db: Database, now: () => number = Date.now) {
       .transaction(async (tx) => {
         await tx.query(`SET LOCAL lock_timeout = '10s'`);
         const current = async () =>
-          (await tx.query<{ ok: boolean }>(`SELECT to_regclass('rate_limits') IS NOT NULL AND to_regclass('posts_open') IS NOT NULL AND to_regclass('audit_log_at') IS NOT NULL AND to_regclass('board_events_repo_id') IS NOT NULL AND to_regclass('entries_listing') IS NOT NULL AND to_regclass('posts_open_decisions') IS NOT NULL AND to_regclass('documents_search_v2') IS NOT NULL AND to_regclass('entries_search') IS NOT NULL AND to_regclass('links_incoming') IS NOT NULL AND to_regclass('work_updates_task') IS NOT NULL AND to_regclass('gateway_servers') IS NOT NULL AS ok`)).rows[0]?.ok;
+          (await tx.query<{ ok: boolean }>(`SELECT to_regclass('rate_limits') IS NOT NULL AND to_regclass('posts_open') IS NOT NULL AND to_regclass('audit_log_at') IS NOT NULL AND to_regclass('board_events_repo_id') IS NOT NULL AND to_regclass('entries_listing') IS NOT NULL AND to_regclass('posts_open_decisions') IS NOT NULL AND to_regclass('documents_search_v2') IS NOT NULL AND to_regclass('entries_search') IS NOT NULL AND to_regclass('links_incoming') IS NOT NULL AND to_regclass('work_updates_task') IS NOT NULL AND to_regclass('gateway_servers') IS NOT NULL AND to_regclass('suggestion_events_uid') IS NOT NULL AS ok`)).rows[0]?.ok;
         if (await current()) return;
         await lock(tx, "companybrain-board:schema");
         if (await current()) return;
@@ -1009,6 +1018,44 @@ export function openStore(db: Database, now: () => number = Date.now) {
       ),
     ]);
     return { uses: uses?.n ?? 0, tools };
+  }
+
+  async function recordSuggestion(uid: number, kind: string, key: string, verdict: "accepted" | "snoozed" | "dismissed"): Promise<void> {
+    await changed(`INSERT INTO suggestion_events (uid, kind, key, verdict, at) VALUES ($1, $2, $3, $4, $5)`, [uid, kind.slice(0, 40), key.slice(0, 300), verdict, now()]);
+  }
+
+  async function suggestionHistory(uid: number): Promise<{ stats: Array<{ kind: string; verdict: string; n: number }>; latest: Array<{ key: string; verdict: string; at: number }> }> {
+    const [stats, latest] = await Promise.all([
+      rows<{ kind: string; verdict: string; n: number }>(`SELECT kind, verdict, COUNT(*)::int AS n FROM suggestion_events WHERE uid = $1 GROUP BY kind, verdict`, [uid]),
+      rows<{ key: string; verdict: string; at: number }>(`SELECT DISTINCT ON (key) key, verdict, at FROM suggestion_events WHERE uid = $1 ORDER BY key, at DESC, id DESC LIMIT 2000`, [uid]),
+    ]);
+    return { stats, latest };
+  }
+
+  async function missingEntries(ownerUid: number): Promise<Array<{ name: string; n: number }>> {
+    return rows(
+      `SELECT l.to_name AS name, COUNT(*)::int AS n FROM links l WHERE l.owner_uid = $1 AND l.to_kind = 'entry'
+       AND NOT EXISTS (SELECT 1 FROM entries e WHERE e.owner_uid = $1 AND lower(e.name) = lower(l.to_name))
+       GROUP BY l.to_name ORDER BY n DESC, l.to_name LIMIT 10`,
+      [ownerUid],
+    );
+  }
+
+  async function unansweredQuestions(uid: number, since: number): Promise<Array<{ question: string; n: number }>> {
+    return rows(
+      `SELECT subject AS question, COUNT(*)::int AS n FROM audit_log WHERE uid = $1 AND tool = 'ask' AND NOT ok AND subject IS NOT NULL AND at > $2
+       GROUP BY subject ORDER BY n DESC, MAX(at) DESC LIMIT 10`,
+      [uid, since],
+    );
+  }
+
+  async function recentSkillReads(uid: number, since: number): Promise<string[]> {
+    return (
+      await rows<{ subject: string }>(
+        `SELECT subject FROM audit_log WHERE uid = $1 AND tool = 'skill_read' AND ok AND at > $2 AND subject LIKE 'skill:%' GROUP BY subject ORDER BY MAX(at) DESC LIMIT 5`,
+        [uid, since],
+      )
+    ).map((r) => r.subject.slice("skill:".length));
   }
 
   async function connections(ownerUid: number, name: string): Promise<Connections> {
@@ -1438,6 +1485,11 @@ export function openStore(db: Database, now: () => number = Date.now) {
     deleteGateway,
     putEntry,
     connections,
+    recordSuggestion,
+    suggestionHistory,
+    missingEntries,
+    unansweredQuestions,
+    recentSkillReads,
     skillUsage,
     graph,
     graphView,
