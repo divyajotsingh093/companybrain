@@ -170,7 +170,8 @@ export async function runAgent(opts: {
       continue;
     }
     if ("prose" in action) {
-      const answer = clamp(action.prose.trim() || "The agent finished without a summary.", 6_000) + ledger();
+      await record({ kind: "thought", text: clamp(cleanLine(action.prose, 1_000), STEP_TEXT) });
+      const answer = `The agent finished without a clean summary; its last reply is in the steps above.${ledger()}`;
       await record({ kind: "final", text: answer });
       return { status: "done", answer };
     }
