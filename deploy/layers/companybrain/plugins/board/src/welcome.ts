@@ -37,7 +37,7 @@ const GOAL_ICON: Record<keyof typeof GOALS, IconName> = { answers: "ChatCircleTe
 const KIT_ICON: Record<keyof typeof KITS, IconName> = { engineering: "Code", operations: "Compass", both: "Stack" };
 
 const STYLE = `
-:root { color-scheme: dark; --bg:#08080a; --ink:#f4f4f6; --ink-2:rgba(244,244,246,.74); --ink-3:rgba(244,244,246,.52); --line:rgba(255,255,255,.10); --line-2:rgba(255,255,255,.16);
+:root { color-scheme: dark; --bg:#08080a; --ink:#f4f4f6; --ink-2:rgba(244,244,246,.74); --ink-3:rgba(244,244,246,.6); --line:rgba(255,255,255,.10); --line-2:rgba(255,255,255,.16);
   --field:#101014; --accent:#5eeab0; --accent-ink:#8ff2c9; --accent-bg:rgba(94,234,176,.10); --danger:#f98b8b; --danger-bg:rgba(249,139,139,.10);
   --ease:cubic-bezier(.23,1,.32,1); --sans:"Geist",ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif; --mono:"Geist Mono",ui-monospace,Menlo,monospace; }
 * { box-sizing:border-box; }
@@ -101,13 +101,13 @@ h1 span { display:block; color:var(--ink-3); }
 .tag { font:500 11.5px var(--sans); color:var(--ink-3); padding:3px 9px; border-radius:999px; box-shadow:inset 0 0 0 1px var(--line); white-space:nowrap; margin-top:4px; }
 .fields { display:grid; gap:16px; grid-template-columns:repeat(auto-fit,minmax(min(100%,240px),1fr)); }
 .field { display:flex; flex-direction:column; gap:7px; min-width:0; }
-.field > span, legend { font-size:13px; font-weight:500; color:var(--ink-2); }
+.field > label, legend { font-size:13px; font-weight:500; color:var(--ink-2); }
 fieldset { border:0; margin:0; padding:0; min-width:0; }
 fieldset + fieldset, .fields + fieldset { margin-top:20px; }
 legend { padding:0; margin-bottom:10px; }
 input[type=text], input[type=email] { width:100%; min-height:48px; padding:0 15px; border-radius:14px; border:0; outline:0; background:rgba(0,0,0,.28); color:var(--ink); font:15px var(--sans);
   box-shadow:inset 0 0 0 1px var(--line-2); transition:box-shadow 200ms var(--ease), background-color 200ms var(--ease); }
-input[type=text]::placeholder, input[type=email]::placeholder { color:rgba(244,244,246,.32); }
+input[type=text]::placeholder, input[type=email]::placeholder { color:rgba(244,244,246,.46); }
 input[type=text]:focus, input[type=email]:focus { box-shadow:inset 0 0 0 1px rgba(94,234,176,.55), 0 0 0 4px rgba(94,234,176,.12); background:rgba(0,0,0,.4); }
 input[aria-invalid=true] { box-shadow:inset 0 0 0 1px rgba(249,139,139,.6); }
 .err { margin:2px 0 0; font-size:13px; color:var(--danger); }
@@ -162,7 +162,7 @@ input[aria-invalid=true] { box-shadow:inset 0 0 0 1px rgba(249,139,139,.6); }
 .note { margin:18px 0 0; padding-top:14px; border-top:1px solid var(--line); font-size:12.5px; color:var(--ink-3); display:flex; gap:8px; }
 .note .ico { color:var(--accent); margin-top:2px; }
 .welcome:has(input[name=kit][value=engineering]:checked) .t-engineering, .welcome:has(input[name=kit][value=operations]:checked) .t-operations, .welcome:has(input[name=kit][value=both]:checked) .t-both { display:flex; }
-.welcome:has(input[name=kit][value=engineering]:checked) .g-operations, .welcome:has(input[name=kit][value=operations]:checked) .g-engineering { opacity:.34; }
+.welcome:has(input[name=kit][value=engineering]:checked) .g-operations :is(ul, .counts), .welcome:has(input[name=kit][value=operations]:checked) .g-engineering :is(ul, .counts) { opacity:.34; }
 .welcome:has(input[name=kit][value=engineering]:checked) .g-operations h3 em, .welcome:has(input[name=kit][value=operations]:checked) .g-engineering h3 em { display:inline; }
 .finish .core { display:flex; flex-wrap:wrap; align-items:center; gap:16px 22px; padding:18px 18px 18px 22px; }
 .consent { display:flex; align-items:center; gap:12px; cursor:pointer; font-size:14px; color:var(--ink-2); flex:1 1 260px; border-radius:10px; }
@@ -173,6 +173,8 @@ input[aria-invalid=true] { box-shadow:inset 0 0 0 1px rgba(249,139,139,.6); }
 .primary:active { transform:scale(.97); }
 .primary .arrow { width:38px; height:38px; border-radius:50%; display:grid; place-items:center; background:rgba(4,20,15,.12); transition:transform 220ms var(--ease); }
 .fine { width:100%; margin:0; font-size:12.5px; color:var(--ink-3); }
+.danger { max-width:1200px; margin:0 auto; padding:0 28px 72px; }
+@media (max-width:560px) { .danger { padding:0 16px 56px; } }
 .danger-row { margin-top:18px; display:flex; flex-wrap:wrap; align-items:center; gap:10px 14px; font-size:12.5px; color:var(--ink-3); }
 @media (prefers-reduced-motion:reduce) { *, *::before, *::after { animation:none !important; transition:none !important; } }
 `;
@@ -196,7 +198,7 @@ export function renderWelcome(opts: { login: string; values: WelcomeInput; error
   const described = (k: keyof WelcomeProblems) => (e[k] ? ` aria-invalid="true" aria-describedby="${k}-error"` : "");
   const err = (k: keyof WelcomeProblems) => (e[k] ? `<p class="err" id="${k}-error">${escapeHtml(e[k] as string)}</p>` : "");
   const input = (id: "name" | "email" | "company", label: string, type: string, extra: string) =>
-    `<label class="field"><span>${label}</span><input type="${type}" id="${id}" name="${id}" value="${escapeHtml(v[id])}" required${extra}${described(id)}>${err(id)}</label>`;
+    `<div class="field"><label for="${id}">${label}</label><input type="${type}" id="${id}" name="${id}" value="${escapeHtml(v[id])}" required${extra}${described(id)}>${err(id)}</div>`;
   const tick = `<span class="tick">${icon("Check", 14)}</span>`;
   const chips = (name: "role" | "teamSize" | "agents", type: "radio" | "checkbox", choices: Record<string, string>, chosen: string[]) =>
     `<div class="chips">${Object.entries(choices)
@@ -229,11 +231,11 @@ export function renderWelcome(opts: { login: string; values: WelcomeInput; error
       ...kit.packs[p].skills.map((s) => li("Wrench", s, "skill")),
     ].join("")}</ul>${counted(kit.packs[p].others)}</div>`;
   const totals = (["engineering", "operations", "both"] as const)
-    .map((k) => `<div class="total t-${k}"><span>${kit.totals[k].entries} entries</span><span>${kit.totals[k].agents} starter agents</span><span>2 documents</span></div>`)
+    .map((k) => `<div class="total t-${k}"><span>${kit.totals[k].entries} entries</span><span>${kit.totals[k].agents} starter agents</span><span>${kit.documents.length} documents</span></div>`)
     .join("");
   const aside = `<aside class="aside bezel" aria-label="What your brain will start with"><div class="core">
-<h2>${icon("Brain", 20)}Your brain will start with</h2><p class="sub">Written in the moment you finish, and yours to edit or delete.</p>${totals}
-<div class="group"><h3>In every kit</h3><ul>${kit.documents.map((d) => li("FileText", d, "document")).join("")}${li("Wrench", "Working with Company Brain", "skill")}</ul>${counted(kit.core)}</div>
+<h2>${icon("Brain", 20)}${opts.editing ? "Your starter kit" : "Your brain will start with"}</h2><p class="sub">${opts.editing ? "Switching kit adds only the new pack. Nothing you deleted comes back." : "Written in the moment you finish, and yours to edit or delete."}</p>${totals}
+<div class="group"><h3>In every kit</h3><ul>${kit.documents.map((d) => li("FileText", d, "document")).join("")}${li("Wrench", kit.harness, "skill")}${kit.memories.map((m) => li("Brain", m, "memory")).join("")}</ul>${counted(kit.core)}</div>
 ${packGroup("engineering", "Engineering pack")}${packGroup("operations", "Operations pack")}
 <p class="note">${icon("Sparkle", 15)}<span>Your first question on Home is answered from these, with every source cited.</span></p></div></aside>`;
   const failure = opts.failure
@@ -246,24 +248,24 @@ ${packGroup("engineering", "Engineering pack")}${packGroup("operations", "Operat
     ? "Choosing another kit adds its pack. Nothing you or your agents wrote is changed or brought back."
     : "Four short steps, about two minutes. We use your answers to fill Company Brain with skills, rules and agents that fit your team, so it is useful from the first question instead of empty.";
   const nav = opts.editing
-    ? `<a class="ghost" href="/app">Open the app ${icon("ArrowRight", 14)}</a>`
+    ? `<a class="ghost" href="/app">Open the app ${icon("ArrowRight", 14)}</a><form method="post" action="/auth/logout"><button class="ghost" type="submit">${icon("SignOut", 15)}Sign out</button></form>`
     : `<form method="post" action="/auth/logout"><button class="ghost" type="submit">${icon("SignOut", 15)}Sign out</button></form>`;
   const body = `<form method="post" action="/welcome" class="welcome" novalidate>
 <div class="head"><span class="eyebrow">${opts.editing ? "Profile" : "Set up"}</span><h1>${heading}</h1><p class="lede">${lede}</p>
 <div class="rail" aria-hidden="true"><span></span><span></span><span></span><span></span></div><p class="rail-label">Steps fill in as you go.</p>${failure}</div>
 <div class="steps">
-${step(1, "About you", "So your agents know who they are working with.", "Required", `<div class="fields">${input("name", "Your name", "text", ` maxlength="80" autocomplete="name" placeholder="Ada Lovelace"`)}${input("email", "Work email", "email", ` maxlength="200" autocomplete="email" inputmode="email" placeholder="you@company.com"`)}</div>`)}
+${step(1, "About you", "So your agents know who they are working with.", "Required", `<div class="fields">${input("name", "Your name", "text", ` maxlength="80" autocomplete="name" placeholder="Ada Lovelace"`)}${input("email", "Work email", "email", ` maxlength="200" autocomplete="email" inputmode="email" pattern="[^@\\s]+@[^@\\s]+\\.[^@\\s]{2,}" placeholder="you@company.com"`)}</div>`)}
 ${step(
   2,
   "Your team",
   "Company Brain belongs to a team, even a team of one.",
   "Required",
   `<div class="fields">${input("company", "Company or team", "text", ` maxlength="100" autocomplete="organization" placeholder="Acme"`)}</div>
-<fieldset${described("role")}><legend>Your role</legend>${chips("role", "radio", ROLES, [v.role])}${err("role")}</fieldset>
-<fieldset${described("teamSize")}><legend>Team size</legend>${chips("teamSize", "radio", TEAM_SIZES, [v.teamSize])}${err("teamSize")}</fieldset>`,
+<fieldset role="radiogroup" aria-required="true"${described("role")}><legend>Your role</legend>${chips("role", "radio", ROLES, [v.role])}${err("role")}</fieldset>
+<fieldset role="radiogroup" aria-required="true"${described("teamSize")}><legend>Team size</legend>${chips("teamSize", "radio", TEAM_SIZES, [v.teamSize])}${err("teamSize")}</fieldset>`,
 )}
 ${step(3, "How you will use it", "Shapes what Home suggests first.", "Optional", `<fieldset><legend>What do you want it for?</legend>${goals}</fieldset><fieldset><legend>Which AI agents do you use?</legend>${chips("agents", "checkbox", AGENT_CHOICES, v.agents)}</fieldset>`)}
-${step(4, "Your starter kit", "Ready-made skills, rules, processes and agents. The preview shows exactly what each one adds.", "Required", `<fieldset${described("kit")}><legend class="sr">Starter kit</legend>${kits}${err("kit")}</fieldset>`)}
+${step(4, "Your starter kit", "Ready-made skills, rules, processes and agents. The preview shows exactly what each one adds.", "Required", `<fieldset role="radiogroup" aria-required="true"${described("kit")}><legend class="sr">Starter kit</legend>${kits}${err("kit")}</fieldset>`)}
 </div>
 ${aside}
 <div class="finish bezel"><div class="core">
@@ -274,7 +276,7 @@ ${aside}
 </form>`;
   const danger = opts.editing
     ? ""
-    : `<div class="welcome" style="padding-top:0;display:block"><div class="danger-row"><form method="post" action="/tokens/revoke-all" style="margin:0"><button class="ghost danger" type="submit">Revoke all tokens and sign out</button></form><span>Revoking deletes every agent token and the stored GitHub authorization. It cannot be undone.</span></div></div>`;
+    : `<div class="danger"><div class="danger-row"><form method="post" action="/tokens/revoke-all" style="margin:0"><button class="ghost danger" type="submit">Revoke all tokens and sign out</button></form><span>Revoking deletes every agent token and the stored GitHub authorization. It cannot be undone.</span></div></div>`;
   return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>${opts.editing ? "Your profile" : "Welcome to Company Brain"}</title><link rel="icon" href="${FAVICON}">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Geist:wght@400..700&family=Geist+Mono:wght@500&display=swap">

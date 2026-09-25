@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { AGREEMENT, HANDBOOK, STARTER_AGENTS } from "../src/starter.ts";
+import { AGREEMENT, HANDBOOK, kitSummary, STARTER_AGENTS } from "../src/starter.ts";
+import { WELCOME_CSP } from "../src/welcome.ts";
 import { buildApp, type Harness, ORIGIN, sessionCookie } from "./fixtures.ts";
 
 const FORM = { "content-type": "application/x-www-form-urlencoded" };
@@ -191,4 +192,37 @@ test("the first question is remembered, and a returning user goes straight to th
   const callback = await h.app.fetch(new Request(`${ORIGIN}/auth/github/callback?code=good-code&state=${state}`, { headers: { cookie: stateCookie } }));
   assert.equal(callback.headers.get("location"), "/app");
   assert.match((await h.store.getEntry("memory", 1, "About alice"))?.body ?? "", /Acme Rockets/, "signing in again keeps the profile in memory");
+});
+
+test("the welcome page always carries its own policy, and a failed save keeps what was typed", async () => {
+  const h = await buildApp();
+  const cookie = await sessionCookie(h, "gh-alice", { welcomed: false });
+  assert.equal((await get(h, "/welcome", cookie)).headers.get("content-security-policy"), WELCOME_CSP);
+  const bad = await welcome(h, cookie, { ...VALID, role: "" });
+  assert.equal(bad.status, 400);
+  assert.equal(bad.headers.get("content-security-policy"), WELCOME_CSP);
+  assert.match(await bad.text(), /role="radiogroup" aria-required="true" aria-invalid="true" aria-describedby="role-error"/);
+  h.store.saveProfile = async () => {
+    throw new Error("database down");
+  };
+  const down = await welcome(h, cookie, VALID);
+  assert.equal(down.status, 503);
+  assert.equal(down.headers.get("content-security-policy"), WELCOME_CSP);
+  const html = await down.text();
+  assert.match(html, /could not be saved/);
+  assert.match(html, /value="Acme Rockets"/);
+});
+
+test("the preview promises exactly what each kit writes", async () => {
+  const kits = ["engineering", "operations", "both"] as const;
+  for (const kit of kits) {
+    const h = await buildApp();
+    const cookie = await sessionCookie(h, "gh-alice", { welcomed: false });
+    await welcome(h, cookie, { ...VALID, kit });
+    const stored = (await Promise.all(["project", "memory", "skill", "process", "rule", "lesson", "record", "role"].map((k) => h.store.listEntries(k as never, 1)))).flat();
+    const summary = kitSummary().totals[kit];
+    assert.equal(stored.length, summary.entries, kit);
+    assert.equal(stored.filter((e) => e.kind === "skill").length, summary.skills, kit);
+    assert.equal((await h.store.listUploads(1)).length, kitSummary().documents.length, kit);
+  }
 });

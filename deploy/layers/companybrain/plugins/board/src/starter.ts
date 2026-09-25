@@ -597,11 +597,16 @@ export function agentCards(profile: Profile, present: ReadonlySet<string>): Arra
     .map((a) => ({ name: `${a.name} agent`, summary: a.summary, skill: a.skill, owns: a.owns, asks: a.asks, prompt: a.prompt(ctx) }));
 }
 
+export const COMPANY_MEMORY = "Company";
+const MEMORIES = ["About you", COMPANY_MEMORY];
+
 export interface KitSummary {
   core: Array<{ kind: EntryKind; name: string }>;
   packs: Record<Pack, { skills: string[]; others: Array<{ kind: EntryKind; name: string }>; agents: string[] }>;
   totals: Record<Kit, { entries: number; skills: number; agents: number }>;
   documents: string[];
+  harness: string;
+  memories: string[];
 }
 
 export function kitSummary(): KitSummary {
@@ -613,12 +618,14 @@ export function kitSummary(): KitSummary {
   const total = (kit: Kit) => {
     const packs = packsOf(kit);
     const items = [...CORE, ...packs.flatMap((p) => PACKS[p])];
-    return { entries: items.length + agentsIn(packs).length, skills: items.filter((i) => i.kind === "skill").length + 1, agents: agentsIn(packs).length };
+    return { entries: items.length + agentsIn(packs).length + 1 + MEMORIES.length, skills: items.filter((i) => i.kind === "skill").length + 1, agents: agentsIn(packs).length };
   };
   return {
     core: CORE.map((i) => ({ kind: i.kind, name: i.name })),
     packs: { engineering: pack("engineering"), operations: pack("operations") },
     totals: { engineering: total("engineering"), operations: total("operations"), both: total("both") },
-    documents: ["Company Brain handbook", "Agent working agreement"],
+    documents: documents({ name: "", first: "", company: "", owner: "", about: "", date: "" }).map((d) => d.title),
+    harness: HARNESS_SKILL,
+    memories: MEMORIES,
   };
 }

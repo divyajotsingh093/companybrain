@@ -1,10 +1,9 @@
 import { type Memory, parseMemory, renderMemory } from "./memory.ts";
 import { parseSkill, renderSkill, type SkillParts } from "./skills.ts";
-import { AGENT_CHOICES, GOALS, KITS, ROLES, TEAM_SIZES } from "./starter.ts";
+import { AGENT_CHOICES, COMPANY_MEMORY, GOALS, KITS, ROLES, TEAM_SIZES } from "./starter.ts";
 import type { Store } from "./store.ts";
 
 export const HARNESS_SKILL = "Working with Company Brain";
-export const COMPANY_MEMORY = "Company";
 export const KEPT_UP_TO_DATE = "Kept up to date by Company Brain. Edit this part and it stops updating.";
 const MAX_AUTO_PROJECTS = 50;
 
