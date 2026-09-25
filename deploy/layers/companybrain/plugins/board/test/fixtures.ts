@@ -17,9 +17,9 @@ const API = "https://api.github.test";
 const WEB = "https://github.test";
 export const ORIGIN = "http://board.test";
 
-export const USERS: Record<string, { login: string; id: number }> = {
-  "gh-alice": { login: "alice", id: 1 },
-  "gh-alice-short": { login: "alice", id: 1 },
+export const USERS: Record<string, { login: string; id: number; name?: string; email?: string }> = {
+  "gh-alice": { login: "alice", id: 1, name: "Alice Liddell", email: "alice@acme.test" },
+  "gh-alice-short": { login: "alice", id: 1, name: "Alice Liddell", email: "alice@acme.test" },
   "gh-bob": { login: "bob", id: 2 },
   "gh-carol": { login: "carol", id: 3 },
   "gh-dave": { login: "dave", id: 4 },
@@ -181,10 +181,13 @@ export async function agentToken(h: Harness, githubToken: string, client: AgentC
   return issued.token;
 }
 
-export async function sessionCookie(h: Harness, githubToken: string): Promise<string> {
+export async function sessionCookie(h: Harness, githubToken: string, opts: { welcomed?: boolean } = {}): Promise<string> {
   const user = USERS[githubToken];
   if (!user) throw new Error(`unknown test user ${githubToken}`);
   await h.auth.saveGrant(user.id, user.login, { accessToken: githubToken, expiresAt: null, refreshToken: null, refreshExpiresAt: null });
+  if (opts.welcomed !== false) {
+    await h.store.saveProfile({ uid: user.id, login: user.login, name: user.login, email: `${user.login}@acme.test`, company: "Acme", role: "engineering", teamSize: "small", goals: [], agents: [], kit: "engineering", updates: false });
+  }
   const issued = await h.auth.issue(user.id, "session", "web", h.config.sessionTtlMs);
   if (!issued) throw new Error("session token refused");
   return `cb_session=${issued.token}`;

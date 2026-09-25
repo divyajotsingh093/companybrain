@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { posix } from "node:path";
 import type { Database, Param, Query } from "./db.ts";
+import { AGENT_CHOICES, GOALS, KITS, type Profile, ROLES, TEAM_SIZES } from "./starter.ts";
 import type { SwimlaneEvent } from "./swimlane.ts";
 import { cleanLine, cleanText } from "./untrusted.ts";
 
@@ -153,6 +154,23 @@ export interface Entry {
   body: string;
   createdAt: number;
   updatedAt: number;
+}
+
+interface ProfileRow {
+  uid: number;
+  login: string;
+  name: string;
+  email: string;
+  company: string;
+  role: string;
+  team_size: string;
+  goals: string;
+  agents: string;
+  kit: string;
+  updates: boolean;
+  created_at: number;
+  updated_at: number;
+  asked_at: number | null;
 }
 
 interface EntryRow {
@@ -532,6 +550,23 @@ const SCHEMA = `
   CREATE INDEX IF NOT EXISTS entries_listing ON entries (kind, owner_uid, updated_at DESC);
   ALTER TABLE entries ADD COLUMN IF NOT EXISTS search tsvector GENERATED ALWAYS AS (to_tsvector('english', name || ' ' || body)) STORED;
   CREATE INDEX IF NOT EXISTS entries_search ON entries USING GIN (search);
+  CREATE TABLE IF NOT EXISTS profiles (
+    uid BIGINT PRIMARY KEY,
+    login TEXT NOT NULL,
+    name TEXT NOT NULL,
+    email TEXT NOT NULL,
+    company TEXT NOT NULL,
+    role TEXT NOT NULL,
+    team_size TEXT NOT NULL,
+    goals TEXT NOT NULL,
+    agents TEXT NOT NULL,
+    kit TEXT NOT NULL,
+    updates BOOLEAN NOT NULL,
+    created_at BIGINT NOT NULL,
+    updated_at BIGINT NOT NULL,
+    asked_at BIGINT,
+    updates_at BIGINT
+  );
 `;
 
 const WIKI_LINK = /\[\[([^\]\n]{1,120})\]\]/g;
@@ -597,7 +632,7 @@ export function openStore(db: Database, now: () => number = Date.now) {
       .transaction(async (tx) => {
         await tx.query(`SET LOCAL lock_timeout = '10s'`);
         const current = async () =>
-          (await tx.query<{ ok: boolean }>(`SELECT to_regclass('rate_limits') IS NOT NULL AND to_regclass('posts_open') IS NOT NULL AND to_regclass('audit_log_at') IS NOT NULL AND to_regclass('board_events_repo_id') IS NOT NULL AND to_regclass('entries_listing') IS NOT NULL AND to_regclass('posts_open_decisions') IS NOT NULL AND to_regclass('documents_search_v2') IS NOT NULL AND to_regclass('entries_search') IS NOT NULL AND to_regclass('links_incoming') IS NOT NULL AND to_regclass('work_updates_task') IS NOT NULL AND to_regclass('gateway_servers') IS NOT NULL AND to_regclass('suggestion_events_uid') IS NOT NULL AS ok`)).rows[0]?.ok;
+          (await tx.query<{ ok: boolean }>(`SELECT to_regclass('rate_limits') IS NOT NULL AND to_regclass('posts_open') IS NOT NULL AND to_regclass('audit_log_at') IS NOT NULL AND to_regclass('board_events_repo_id') IS NOT NULL AND to_regclass('entries_listing') IS NOT NULL AND to_regclass('posts_open_decisions') IS NOT NULL AND to_regclass('documents_search_v2') IS NOT NULL AND to_regclass('entries_search') IS NOT NULL AND to_regclass('links_incoming') IS NOT NULL AND to_regclass('work_updates_task') IS NOT NULL AND to_regclass('gateway_servers') IS NOT NULL AND to_regclass('suggestion_events_uid') IS NOT NULL AND to_regclass('profiles') IS NOT NULL AS ok`)).rows[0]?.ok;
         if (await current()) return;
         await lock(tx, "companybrain-board:schema");
         if (await current()) return;
@@ -954,6 +989,7 @@ export function openStore(db: Database, now: () => number = Date.now) {
       await tx.query(`DELETE FROM audit_log WHERE uid = $1`, [uid]);
       await tx.query(`DELETE FROM gateway_servers WHERE owner_uid = $1`, [uid]);
       await tx.query(`DELETE FROM suggestion_events WHERE uid = $1`, [uid]);
+      await tx.query(`DELETE FROM profiles WHERE uid = $1`, [uid]);
     });
   }
 
@@ -1275,7 +1311,7 @@ export function openStore(db: Database, now: () => number = Date.now) {
     ).map(toPost);
   }
 
-  async function putDocument(d: { ownerUid: number; repoId: number; repoName: string; path: string; title: string; body: string }): Promise<boolean> {
+  async function putDocument(d: { ownerUid: number; repoId: number; repoName: string; path: string; title: string; body: string; createOnly?: boolean }): Promise<boolean> {
     const title = cleanLine(d.title, 200);
     const body = cleanText(d.body, MAX_DOC_BODY);
     if (!title || !body.trim()) return false;
@@ -1284,6 +1320,7 @@ export function openStore(db: Database, now: () => number = Date.now) {
       const at = now();
       const existing = (await tx.query<{ id: string }>(`SELECT id FROM documents WHERE owner_uid = $1 AND repo_id = $2 AND path = $3`, [d.ownerUid, d.repoId, d.path])).rows[0];
       if (existing) {
+        if (d.createOnly) return false;
         await tx.query(`UPDATE documents SET repo_name = $1, title = $2, body = $3, indexed_at = $4 WHERE id = $5`, [d.repoName, title, body, at, existing.id]);
         return true;
       }
@@ -1381,8 +1418,8 @@ export function openStore(db: Database, now: () => number = Date.now) {
     });
   }
 
-  async function putUpload(ownerUid: number, name: string, title: string, body: string): Promise<boolean> {
-    return putDocument({ ownerUid, repoId: UPLOAD_REPO_ID, repoName: UPLOAD_REPO_NAME, path: cleanLine(name, MAX_UPLOAD_NAME), title, body });
+  async function putUpload(ownerUid: number, name: string, title: string, body: string, opts: { createOnly?: boolean } = {}): Promise<boolean> {
+    return putDocument({ ownerUid, repoId: UPLOAD_REPO_ID, repoName: UPLOAD_REPO_NAME, path: cleanLine(name, MAX_UPLOAD_NAME), title, body, ...opts });
   }
 
   async function listUploads(ownerUid: number): Promise<Array<{ name: string; title: string; size: number; indexedAt: number }>> {
@@ -1390,6 +1427,43 @@ export function openStore(db: Database, now: () => number = Date.now) {
       `SELECT path AS name, title, length(body) AS size, indexed_at AS "indexedAt" FROM documents WHERE owner_uid = $1 AND repo_id = ${UPLOAD_REPO_ID} ORDER BY indexed_at DESC LIMIT 200`,
       [ownerUid],
     );
+  }
+
+  async function profile(uid: number): Promise<Profile | null> {
+    const r = await first<ProfileRow>(`SELECT uid, login, name, email, company, role, team_size, goals, agents, kit, updates, created_at, updated_at, asked_at FROM profiles WHERE uid = $1`, [uid]);
+    if (!r) return null;
+    const list = (v: string) => v.split(",").filter(Boolean);
+    return {
+      uid: Number(r.uid),
+      login: r.login,
+      name: r.name,
+      email: r.email,
+      company: r.company,
+      role: Object.hasOwn(ROLES, r.role) ? (r.role as Profile["role"]) : "other",
+      teamSize: Object.hasOwn(TEAM_SIZES, r.team_size) ? (r.team_size as Profile["teamSize"]) : "solo",
+      goals: list(r.goals).filter((g) => Object.hasOwn(GOALS, g)) as Profile["goals"],
+      agents: list(r.agents).filter((a) => Object.hasOwn(AGENT_CHOICES, a)) as Profile["agents"],
+      kit: Object.hasOwn(KITS, r.kit) ? (r.kit as Profile["kit"]) : "both",
+      updates: Boolean(r.updates),
+      createdAt: Number(r.created_at),
+      updatedAt: Number(r.updated_at),
+      askedAt: r.asked_at === null ? null : Number(r.asked_at),
+    };
+  }
+
+  async function saveProfile(p: Omit<Profile, "createdAt" | "updatedAt" | "askedAt">): Promise<void> {
+    await changed(
+      `INSERT INTO profiles (uid, login, name, email, company, role, team_size, goals, agents, kit, updates, created_at, updated_at, updates_at)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11::boolean, $12, $12, CASE WHEN $11::boolean THEN $12::bigint END)
+       ON CONFLICT (uid) DO UPDATE SET login = EXCLUDED.login, name = EXCLUDED.name, email = EXCLUDED.email, company = EXCLUDED.company, role = EXCLUDED.role,
+         team_size = EXCLUDED.team_size, goals = EXCLUDED.goals, agents = EXCLUDED.agents, kit = EXCLUDED.kit, updates = EXCLUDED.updates, updated_at = EXCLUDED.updated_at,
+         updates_at = CASE WHEN NOT EXCLUDED.updates THEN NULL WHEN profiles.updates THEN profiles.updates_at ELSE EXCLUDED.updated_at END`,
+      [p.uid, p.login, p.name, p.email, p.company, p.role, p.teamSize, p.goals.join(","), p.agents.join(","), p.kit, p.updates ? "true" : "false", now()],
+    );
+  }
+
+  async function markAsked(uid: number): Promise<void> {
+    await changed(`UPDATE profiles SET asked_at = $2 WHERE uid = $1 AND asked_at IS NULL`, [uid, now()]);
   }
 
   async function listGateways(ownerUid: number): Promise<Array<{ name: string; url: string; hasToken: boolean; createdAt: number }>> {
@@ -1485,6 +1559,9 @@ export function openStore(db: Database, now: () => number = Date.now) {
     putUpload,
     listUploads,
     deleteUpload,
+    profile,
+    saveProfile,
+    markAsked,
     listGateways,
     gateway,
     putGateway,

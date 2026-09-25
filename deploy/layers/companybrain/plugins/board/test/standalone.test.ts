@@ -9,10 +9,10 @@ test("signing in fills in who you are, with no agent attached", async () => {
   const state = new URL(start.headers.get("location") ?? "").searchParams.get("state");
   const stateCookie = (start.headers.get("set-cookie") ?? "").split(";")[0] as string;
   const callback = await h.app.fetch(new Request(`${ORIGIN}/auth/github/callback?code=good-code&state=${state}`, { headers: { cookie: stateCookie } }));
-  assert.equal(callback.headers.get("location"), "/");
+  assert.equal(callback.headers.get("location"), "/welcome");
   const about = await h.store.getEntry("memory", 1, "About alice");
   assert.match(about?.body ?? "", /type: user/);
-  assert.equal(await h.store.getEntry("skill", 1, "Working with Company Brain"), null, "the agent starter skill waits until an agent is attached");
+  assert.equal(await h.store.getEntry("skill", 1, "Working with Company Brain"), null, "nothing but who you are is written until you finish the welcome step");
 });
 
 test("the setup page leads with using Company Brain on its own, and lists every agent tool", async () => {

@@ -243,6 +243,13 @@ test("GitHub sign-in, token management, refresh and revocation", async (t) => {
   assert.match(setCookie, /SameSite=Lax/i);
   assert.match(setCookie, /Path=\//);
   const cookie = setCookie.split(";")[0] as string;
+  assert.equal(callback.headers.get("location"), "/welcome", "a first sign-in asks who you are before anything else");
+  assert.equal((await h.app.fetch(new Request(`${ORIGIN}/`, { headers: { cookie } }))).headers.get("location"), "/welcome");
+  const welcomed = await post(h, "/welcome", {
+    headers: { "content-type": "application/x-www-form-urlencoded", cookie, origin: ORIGIN },
+    body: "name=Alice&email=alice%40acme.test&company=Acme&role=engineering&teamSize=small&kit=engineering",
+  });
+  assert.equal(welcomed.headers.get("location"), "/app");
 
   const home = await h.app.fetch(new Request(`${ORIGIN}/`, { headers: { cookie } }));
   const html = await home.text();

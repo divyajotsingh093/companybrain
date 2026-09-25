@@ -15,6 +15,12 @@ const MODES: Mode[] = [
 
 export interface HomeFacts {
   login: string;
+  first: string;
+  kit: string;
+  asked: boolean;
+  knowledge: boolean;
+  rules: number;
+  starterAgents: number;
   agents: number;
   sources: number;
   memories: number;
@@ -142,11 +148,23 @@ function Suggestions({ onGo }: { onGo: (d: Destination, text?: string) => void }
   );
 }
 
-function Journey({ facts, gateways, onGo }: { facts: HomeFacts; gateways: number | null; onGo: (d: Destination) => void }): JSX.Element | null {
+const FIRST_QUESTION = "What should our agents never do without asking a person first?";
+
+const tryAsking = (kit: string): string[] => [
+  FIRST_QUESTION,
+  "How do I connect Claude Code to Company Brain?",
+  kit === "operations" ? "How do we run weekly planning?" : "How do we ship a change safely?",
+];
+
+function Journey({ facts, gateways, onGo }: { facts: HomeFacts; gateways: number | null; onGo: (d: Destination, text?: string) => void }): JSX.Element | null {
   const pal = usePal();
-  const steps: Array<{ title: string; detail: string; done: boolean; go?: Destination; optional?: boolean }> = [
+  const count = (n: number, one: string, many: string): string => (n ? `${n} ${n === 1 ? one : many}` : "");
+  const kit = [count(facts.skills, "skill", "skills"), count(facts.rules, "rule", "rules"), count(facts.starterAgents, "starter agent", "starter agents")].filter(Boolean).join(", ");
+  const steps: Array<{ title: string; detail: string; done: boolean; go?: Destination; seed?: string; optional?: boolean }> = [
     { title: "Sign in with GitHub", detail: `Signed in as ${facts.login}. Access follows your repository permissions.`, done: true },
-    { title: "Give it knowledge", detail: "Index a repository or add files, so answers have something to draw on.", done: facts.sources > 0, go: "sources" },
+    { title: "Load a starter kit", detail: kit ? `${kit} ready to use and edit.` : "Pick a starter kit on your profile page to load skills, rules and agents.", done: Boolean(kit) },
+    { title: "Ask your first question", detail: "Ask something the starter kit covers and see the answer cite its sources.", done: facts.asked, go: "ask", seed: FIRST_QUESTION },
+    { title: "Add your own knowledge", detail: "Index a repository or add a file your team keeps re-explaining, so answers are about your company, not just the starter kit.", done: facts.knowledge, go: "sources" },
     { title: "Teach it about you", detail: "Save something your agents and answers should always know with Remember this above, or let a connected agent add memories as it works.", done: facts.taught, go: "memory" },
     { title: "Connect an agent", detail: "Company Brain works on its own. Connect Claude Code, Codex or Cursor when you want your agents to read and grow the same brain; a starter skill fills in as it attaches.", done: facts.agents > 0, go: "agents", optional: true },
     { title: "Connect a tool", detail: "Add another MCP server, like your tracker or docs, and agents reach it through Company Brain.", done: (gateways ?? 0) > 0, go: "gateway", optional: true },
@@ -207,7 +225,7 @@ function Journey({ facts, gateways, onGo }: { facts: HomeFacts; gateways: number
               return (
                 <li key={s.title}>
                   {s.go && !s.done ? (
-                    <button className="cb-step" style={{ width: "100%" }} onClick={() => onGo(s.go as Destination)}>
+                    <button className="cb-step" style={{ width: "100%" }} onClick={() => onGo(s.go as Destination, s.seed)}>
                       {body}
                     </button>
                   ) : (
@@ -266,7 +284,7 @@ export function HomeScreen({ facts, onGo }: { facts: HomeFacts; onGo: (d: Destin
   return (
     <Stack gap={36} style={{ maxWidth: 860 }}>
       <Stack gap={20}>
-        <Heading level={2}>What do you want to do?</Heading>
+        <Heading level={2}>{facts.first ? `What do you want to do, ${facts.first}?` : "What do you want to do?"}</Heading>
         <div className="cb-home-box">
           <textarea ref={box} aria-label={mode.label} rows={2} value={text} placeholder={mode.placeholder} onChange={(e) => setText(e.target.value)} onKeyDown={onKey} />
           <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
@@ -282,14 +300,27 @@ export function HomeScreen({ facts, onGo }: { facts: HomeFacts; onGo: (d: Destin
             </button>
           </div>
         </div>
-        <Text secondary size="sm" style={{ color: pal.textTertiary }}>
-          Enter to {mode.send.toLowerCase()}, Shift and Enter for a new line.
-        </Text>
+        {facts.asked ? (
+          <Text secondary size="sm" style={{ color: pal.textTertiary }}>
+            Enter to {mode.send.toLowerCase()}, Shift and Enter for a new line.
+          </Text>
+        ) : (
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+            <Text secondary size="sm" style={{ color: pal.textTertiary }}>
+              Try asking
+            </Text>
+            {tryAsking(facts.kit).map((q) => (
+              <button key={q} className="cb-btn" data-variant="ghost" data-size="sm" style={{ whiteSpace: "normal", textAlign: "left", height: "auto", minHeight: 32, maxWidth: "100%" }} onClick={() => onGo("ask", q)}>
+                {q}
+              </button>
+            ))}
+          </div>
+        )}
       </Stack>
 
       <Suggestions onGo={onGo} />
 
-      <Journey facts={facts} gateways={gateways} onGo={(d) => onGo(d)} />
+      <Journey facts={facts} gateways={gateways} onGo={onGo} />
 
       <Stack gap={12}>
         <span className="cb-eyebrow">Jump to</span>

@@ -1,8 +1,10 @@
 import { type Memory, parseMemory, renderMemory } from "./memory.ts";
 import { parseSkill, renderSkill, type SkillParts } from "./skills.ts";
+import { AGENT_CHOICES, GOALS, KITS, ROLES, TEAM_SIZES } from "./starter.ts";
 import type { Store } from "./store.ts";
 
 export const HARNESS_SKILL = "Working with Company Brain";
+export const COMPANY_MEMORY = "Company";
 export const KEPT_UP_TO_DATE = "Kept up to date by Company Brain. Edit this part and it stops updating.";
 const MAX_AUTO_PROJECTS = 50;
 
@@ -24,12 +26,39 @@ async function autoMemory(store: Store, uid: number, name: string, memory: Omit<
 }
 
 export async function seedPerson(store: Store, uid: number, login: string, repos: string[]): Promise<void> {
+  const profile = await store.profile(uid);
+  const active = repos.length ? ` Recently active in ${repos.slice(0, 8).join(", ")}.` : "";
+  if (!profile) {
+    await autoMemory(store, uid, `About ${login}`, {
+      type: "user",
+      description: repos.length ? `${login} on GitHub, working across ${repos.length === 1 ? "1 repository" : `${repos.length} repositories`}` : `${login} on GitHub`,
+      fact: `GitHub user ${login}.${active}`,
+      why: "So every agent knows who it is working with from the first session.",
+      how: "Add what you learn about their role, expertise and preferences with memory_save, type user. Keep one fact per memory.",
+    });
+    return;
+  }
+  const agents = profile.agents.filter((a) => a !== "none").map((a) => AGENT_CHOICES[a]);
   await autoMemory(store, uid, `About ${login}`, {
     type: "user",
-    description: repos.length ? `${login} on GitHub, working across ${repos.length === 1 ? "1 repository" : `${repos.length} repositories`}` : `${login} on GitHub`,
-    fact: `GitHub user ${login}.${repos.length ? ` Recently active in ${repos.slice(0, 8).join(", ")}.` : ""}`,
-    why: "So every agent knows who it is working with from the first session.",
-    how: "Add what you learn about their role, expertise and preferences with memory_save, type user. Keep one fact per memory.",
+    description: `${profile.name}, ${ROLES[profile.role].toLowerCase()} at ${profile.company}`,
+    fact: [
+      `${profile.name} (GitHub ${login}) works in ${ROLES[profile.role].toLowerCase()} at ${profile.company}, ${TEAM_SIZES[profile.teamSize].toLowerCase()}.`,
+      profile.goals.length ? `They want Company Brain to: ${profile.goals.map((g) => GOALS[g].toLowerCase()).join("; ")}.` : "",
+      agents.length ? `They use ${agents.join(", ")}.` : "They are not using an AI agent yet.",
+      active.trim(),
+    ]
+      .filter(Boolean)
+      .join(" "),
+    why: "So every agent knows who it is working with, and what they are trying to get done, from the first session.",
+    how: "Address them by name, and aim suggestions at what they want Company Brain for. Add what you learn about their expertise and preferences with memory_save, type user. Keep one fact per memory.",
+  });
+  await autoMemory(store, uid, COMPANY_MEMORY, {
+    type: "project",
+    description: `${profile.company}: ${TEAM_SIZES[profile.teamSize].toLowerCase()}, setting up Company Brain`,
+    fact: `${profile.company} is the company this brain belongs to. ${TEAM_SIZES[profile.teamSize]}. Starter kit: ${KITS[profile.kit].label.toLowerCase()}.`,
+    why: "So agents know whose knowledge this is, and how big the team they are working for is.",
+    how: "Treat rules and processes in the brain as how this company works. Starter entries are a beginning; prefer anything the team wrote themselves.",
   });
 }
 

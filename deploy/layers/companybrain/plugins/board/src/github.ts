@@ -190,7 +190,7 @@ export function createGitHub(token: string | null, opts: { apiUrl: string; fetch
   }
 
   return {
-    viewer: () => json<{ login: string; id: number }>("/user"),
+    viewer: () => json<{ login: string; id: number; name?: string | null; email?: string | null }>("/user"),
 
     async listRepos(limit: number): Promise<RepoSummary[]> {
       const rows = await json<RawRepo[]>(`/user/repos?per_page=${Math.min(Math.max(limit, 1), 100)}&sort=pushed`);

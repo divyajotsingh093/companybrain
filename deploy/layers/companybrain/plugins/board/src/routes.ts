@@ -14,13 +14,14 @@ import type { RateLimiter } from "./limits.ts";
 import { APP_JS_BASE64 } from "./app-bundle.ts";
 import { createBoardServer, describeError, TOOL_NAMES } from "./mcp.ts";
 import { forgetReference, quietly, seedHarnessSkill, seedPerson, seedProject, seedReference } from "./seed.ts";
+import { AGREEMENT, agentCards, HANDBOOK, packsOf, readWelcome, seedStarterKit, type WelcomeInput } from "./starter.ts";
 import { isMemoryType, MEMORY_PURPOSE, parseMemory, renderMemory } from "./memory.ts";
 import { learnInto, PART_PURPOSE, parseSkill, pulse, renderSkill, SKILL_PARTS, STALE_AFTER_MS } from "./skills.ts";
 import { candidates, rank, type Signals } from "./suggest.ts";
 import { cleanLine, cleanText } from "./untrusted.ts";
 import { ACTIVE_AGENT_TOKENS_PER_USER, ENTRY_KINDS, KIND_PURPOSE, MAX_DOC_BODY, MAX_ENTRY_BODY, MAX_ENTRY_NAME, MAX_UPLOAD_NAME, type Store } from "./store.ts";
 import { hashToken, isAgentClient, seal, unseal } from "./token.ts";
-import { type ErrorCode, isErrorCode, renderBoard, renderConnected, renderDenied, renderHome, renderMessage, renderTokenCreated } from "./web.ts";
+import { type ErrorCode, isErrorCode, renderBoard, renderConnected, renderDenied, renderHome, renderMessage, renderTokenCreated, renderWelcome } from "./web.ts";
 
 export interface AppDeps {
   model?: Model;
@@ -48,6 +49,7 @@ const REINDEX_BATCH = 50;
 const REINDEX_GIVE_UP_MS = 30 * 24 * 3_600_000;
 const ASK_PER_DAY = 200;
 const SEED_WAIT_MS = 3_000;
+const PRIVACY_URL = "https://www.getvortic.com/privacy";
 const SUGGEST_PER_MINUTE = 30;
 const REINDEX_BUDGET_MS = 150_000;
 const INDEX_PER_MINUTE = 6;
@@ -104,6 +106,7 @@ export function createApp(deps: AppDeps): Hono {
       const code = c.req.query("error");
       return c.html(renderHome({ githubConfigured, ...(isErrorCode(code) ? { error: code } : {}) }));
     }
+    if (!(await store.profile(principal.uid))) return c.redirect("/welcome");
     return c.html(
       renderConnected({
         login: principal.login,
@@ -204,6 +207,7 @@ export function createApp(deps: AppDeps): Hono {
       await auth.saveGrant(viewer.id, viewer.login, grant);
       const issued = await auth.issue(viewer.id, "session", "web", config.sessionTtlMs);
       if (!issued) return fail("exchange");
+      const profile = await store.profile(viewer.id);
       await Promise.race([
         quietly("person", async () => seedPerson(store, viewer.id, viewer.login, (await githubFor(grant.accessToken).listRepos(12)).map((r) => r.fullName))),
         new Promise((resolve) => setTimeout(resolve, SEED_WAIT_MS)),
@@ -215,10 +219,64 @@ export function createApp(deps: AppDeps): Hono {
         path: "/",
         maxAge: Math.floor(config.sessionTtlMs / 1000),
       });
-      return c.redirect("/");
+      return c.redirect(profile ? "/app" : "/welcome");
     } catch {
       return fail("exchange");
     }
+  });
+
+  const within = <T>(work: Promise<T>, fallback: T): Promise<T> =>
+    Promise.race([work.catch(() => fallback), new Promise<T>((resolve) => setTimeout(() => resolve(fallback), SEED_WAIT_MS))]);
+
+  const tooFast = async (uid: number) => !(await limiter.allow(`welcome:${uid}`));
+
+  app.get("/welcome", async (c) => {
+    const principal = await session(c);
+    if (!principal) return c.redirect("/");
+    if (await tooFast(principal.uid)) return c.html(renderMessage("Slow down", "Too many requests. Wait a minute and reload."), 429);
+    const existing = await store.profile(principal.uid);
+    const github = existing
+      ? null
+      : await within(
+          (async () => githubFor(await auth.githubToken(principal.uid)).viewer())(),
+          null,
+        );
+    const values: WelcomeInput = existing
+      ? { name: existing.name, email: existing.email, company: existing.company, role: existing.role, teamSize: existing.teamSize, goals: existing.goals, agents: existing.agents, kit: existing.kit, updates: existing.updates }
+      : { name: cleanLine(github?.name ?? "", 80), email: cleanLine(github?.email ?? "", 200), company: "", role: "", teamSize: "", goals: [], agents: [], kit: "both", updates: false };
+    return c.html(renderWelcome({ login: principal.login, values, errors: {}, editing: existing !== null, privacyUrl: PRIVACY_URL }));
+  });
+
+  app.post("/welcome", formLimit, async (c) => {
+    const principal = await session(c);
+    if (!principal) return c.redirect("/");
+    if (!sameOrigin(c)) return c.html(renderMessage("Request blocked", "That request did not come from this site."), 403);
+    if (await tooFast(principal.uid)) return c.html(renderMessage("Slow down", "Too many requests. Wait a minute and try again."), 429);
+    const existing = await store.profile(principal.uid);
+    const read = readWelcome(await c.req.parseBody({ all: true }));
+    const again = (status: 400 | 503, failure?: string) =>
+      c.html(renderWelcome({ login: principal.login, values: read.values, errors: read.errors, editing: existing !== null, privacyUrl: PRIVACY_URL, ...(failure ? { failure } : {}) }), status);
+    if (!read.profile) return again(400);
+    let profile: Awaited<ReturnType<typeof store.profile>>;
+    try {
+      await store.saveProfile({ ...read.profile, uid: principal.uid, login: principal.login });
+      profile = await store.profile(principal.uid);
+    } catch {
+      return again(503, "Your details could not be saved just now. Nothing was lost; try again in a moment.");
+    }
+    if (profile) {
+      const added = existing ? packsOf(profile.kit).filter((p) => !packsOf(existing.kit).includes(p)) : undefined;
+      if (!existing || added?.length) {
+        await quietly("starter", () => seedStarterKit(store, profile, { about: `About ${principal.login}`, now: now(), ...(added ? { packs: added } : {}) }));
+      }
+      const repos = await within(
+        (async () => (await githubFor(await auth.githubToken(principal.uid)).listRepos(12)).map((r) => r.fullName))(),
+        [] as string[],
+      );
+      await quietly("harness", () => weaveHarness(principal.uid, principal.login, repos));
+      await quietly("person", () => seedPerson(store, principal.uid, principal.login, repos));
+    }
+    return c.redirect("/app");
   });
 
   app.post("/auth/logout", formLimit, async (c) => {
@@ -242,6 +300,7 @@ export function createApp(deps: AppDeps): Hono {
   app.get("/board/:owner/:repo", async (c) => {
     const principal = await session(c);
     if (!principal) return c.redirect("/");
+    if (!(await store.profile(principal.uid))) return c.redirect("/welcome");
     const repo = `${c.req.param("owner")}/${c.req.param("repo")}`;
     try {
       const a = await access.check(principal.uid, principal.login, repo);
@@ -258,7 +317,9 @@ export function createApp(deps: AppDeps): Hono {
   const appJs = Buffer.from(APP_JS_BASE64, "base64").toString("utf8");
 
   app.get("/app", async (c) => {
-    if (!(await session(c))) return c.redirect("/");
+    const principal = await session(c);
+    if (!principal) return c.redirect("/");
+    if (!(await store.profile(principal.uid))) return c.redirect("/welcome");
     c.header("content-security-policy", "default-src 'none'; script-src 'self'; style-src 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; connect-src 'self'; img-src 'self' data:; form-action 'self'; frame-ancestors 'none'; base-uri 'none'");
     c.header("cache-control", "no-store");
     return c.html(
@@ -284,9 +345,11 @@ export function createApp(deps: AppDeps): Hono {
     if (!principal) return c.json({ error: "sign_in" }, 401);
     try {
       const github = githubFor(await auth.githubToken(principal.uid));
-      const repos = await github.listRepos(12);
+      const [repos, profile, roles] = await Promise.all([github.listRepos(12), store.profile(principal.uid), store.listEntries("role", principal.uid)]);
       return c.json({
         login: principal.login,
+        profile: profile ? { name: profile.name, company: profile.company, kit: profile.kit, agents: profile.agents, askedAt: profile.askedAt } : null,
+        starterAgents: profile ? agentCards(profile, new Set(roles.map((r) => r.name))) : [],
         repos: repos.map((repo) => ({ fullName: repo.fullName, private: repo.private, pushedAt: repo.pushedAt })),
         tokens: (await store.activeTokens(principal.uid, "agent")).map((t) => ({
           id: t.id,
@@ -655,7 +718,9 @@ export function createApp(deps: AppDeps): Hono {
   app.get("/api/app/sources", async (c) => {
     const principal = await session(c);
     if (!principal) return c.json({ error: "sign_in" }, 401);
-    return c.json({ sources: await store.sources(principal.uid), canAsk: model !== null, now: now() });
+    const [sources, uploads] = await Promise.all([store.sources(principal.uid), store.listUploads(principal.uid)]);
+    const ownFiles = uploads.filter((u) => u.name !== HANDBOOK && u.name !== AGREEMENT).length;
+    return c.json({ sources, ownFiles, canAsk: model !== null, now: now() });
   });
 
   app.post("/api/app/sources", jsonLimit, async (c) => {
@@ -711,6 +776,7 @@ export function createApp(deps: AppDeps): Hono {
     }
     try {
       const answer = await answerQuestion({ question: payload.question, found, model, history });
+      await store.markAsked(principal.uid).catch(() => undefined);
       return c.json({ ...answer, related: [...related.values()].slice(0, 8) });
     } catch {
       return c.json({ error: "model_failed" }, 502);

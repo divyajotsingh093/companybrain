@@ -34,8 +34,19 @@ import {
 } from "./ui";
 
 
+interface StarterAgent {
+  name: string;
+  summary: string;
+  skill: string;
+  owns: string;
+  asks: string;
+  prompt: string;
+}
+
 interface Me {
   login: string;
+  profile?: { name: string; company: string; kit: string; agents: string[]; askedAt: number | null } | null;
+  starterAgents?: StarterAgent[];
   repos: Array<{ fullName: string; private: boolean; pushedAt?: string }>;
   tokens: Array<{ id: string; client: string; createdAt: number; lastUsedAt: number | null; expiresAt: number }>;
   activity: Array<{ at: number; client: string; tool: string; subject: string | null; ok: boolean }>;
@@ -97,6 +108,7 @@ interface Brain {
 
 interface Sources {
   sources: Array<{ repoName: string; documents: number; indexedAt: number }>;
+  ownFiles?: number;
   canAsk: boolean;
   now: number;
 }
@@ -235,9 +247,67 @@ function Overview({ me, onOpen }: { me: Me; onOpen: (repo: string) => void }): J
   );
 }
 
+function StarterAgents({ agents }: { agents: StarterAgent[] }): JSX.Element | null {
+  const pal = usePal();
+  const [copied, setCopied] = useState<{ name: string; ok: boolean } | null>(null);
+  useEffect(() => {
+    if (!copied) return;
+    const t = setTimeout(() => setCopied(null), 2400);
+    return () => clearTimeout(t);
+  }, [copied]);
+  if (!agents.length) return null;
+  const copy = async (a: StarterAgent): Promise<void> => {
+    try {
+      await navigator.clipboard.writeText(a.prompt);
+      setCopied({ name: a.name, ok: true });
+    } catch {
+      setCopied({ name: a.name, ok: false });
+    }
+  };
+  return (
+    <Stack gap={10}>
+      <Stack gap={2}>
+        <Heading level={4} theme={THEME}>
+          Starter agents
+        </Heading>
+        <Text secondary theme={THEME}>
+          Ready-made roles from your starter kit. Connect Claude Code, Codex, Cursor or Grok, then paste a kickoff prompt to start one.
+        </Text>
+      </Stack>
+      <div style={{ display: "grid", gap: 12, gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 280px), 1fr))" }}>
+        {agents.map((a) => (
+          <Card key={a.name} theme={THEME} style={{ height: "100%", display: "flex", flexDirection: "column" }}>
+            <Stack gap={10} style={{ flex: 1 }}>
+              <Stack gap={4}>
+                <Text theme={THEME} weight="semibold">
+                  {a.name}
+                </Text>
+                <Text secondary size="sm" theme={THEME}>
+                  {a.summary}
+                </Text>
+              </Stack>
+              <Text secondary size="sm" theme={THEME} style={{ color: pal.textTertiary }}>
+                {`Follows the \u201c${a.skill}\u201d skill. Asks you before ${a.asks.charAt(0).toLowerCase()}${a.asks.slice(1)}`}
+              </Text>
+              <div style={{ flex: 1 }} />
+              <div role="status" aria-live="polite" style={{ minHeight: 18, fontSize: 12.5, color: copied?.ok === false ? pal.danger : pal.accentText }}>
+                {copied?.name === a.name ? (copied.ok ? "Kickoff prompt copied." : "Copy failed. Select the prompt in the role entry instead.") : ""}
+              </div>
+              <Button variant="secondary" size="sm" theme={THEME} onClick={() => void copy(a)}>
+                Copy kickoff prompt
+              </Button>
+            </Stack>
+          </Card>
+        ))}
+      </div>
+    </Stack>
+  );
+}
+
 function AgentsScreen({ me }: { me: Me }): JSX.Element {
   return (
     <Stack gap={32}>
+      <StarterAgents agents={me.starterAgents ?? []} />
       <Stack gap={10}>
         <Heading level={4} theme={THEME}>
           Connected agents
@@ -255,7 +325,14 @@ function AgentsScreen({ me }: { me: Me }): JSX.Element {
               />
             ))
           ) : (
-            <EmptyState title="No agents connected" description="Create a token on the home page, then paste its setup into the agent." theme={THEME} />
+            <Stack gap={12} style={{ padding: 20 }}>
+              <EmptyState title="No agents connected" description="Pick your agent on the setup page to get a token and a setup to paste into it. For Claude Code it is one terminal command." theme={THEME} />
+              <div>
+                <Button variant="primary" size="sm" theme={THEME} onClick={() => window.location.assign("/")}>
+                  Connect an agent
+                </Button>
+              </div>
+            </Stack>
           )}
         </Card>
       </Stack>
@@ -690,7 +767,7 @@ function EntriesScreen({ kind, entries, now, limit, onChanged }: { kind: EntryKi
 
   return (
     <Stack gap={10}>
-      <Stack direction="row" justify="space-between" align="center" gap={12}>
+      <Stack direction="row" justify="space-between" align="center" gap={12} wrap>
         <Stack gap={2} style={{ minWidth: 0 }}>
           <Heading level={4} theme={THEME}>
             {KIND_LABEL[kind]}
@@ -946,6 +1023,12 @@ export function App(): JSX.Element {
         <HomeScreen
           facts={{
             login: me.login,
+            first: (me.profile?.name ?? "").split(/\s+/)[0] ?? "",
+            kit: me.profile?.kit ?? "",
+            asked: Boolean(me.profile?.askedAt) || thread.length > 0,
+            knowledge: (sources?.ownFiles ?? 0) > 0 || (sources?.sources ?? []).some((s) => s.repoName !== UPLOADS),
+            rules: brain?.kinds.rule.length ?? 0,
+            starterAgents: me.starterAgents?.length ?? 0,
             agents: me.tokens.length,
             sources: sources?.sources.length ?? 0,
             memories: memories.length,

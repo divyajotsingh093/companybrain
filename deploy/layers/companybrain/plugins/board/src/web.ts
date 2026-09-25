@@ -1,5 +1,6 @@
 import type { AuditEntry, Board, BoardEvent, Post, TokenRow } from "./store.ts";
 import { swimlaneTpl, type SwimlaneEvent } from "./swimlane.ts";
+import { AGENT_CHOICES, GOALS, KITS, ROLES, TEAM_SIZES, type WelcomeInput, type WelcomeProblems } from "./starter.ts";
 import { AGENT_CLIENTS, type AgentClient } from "./token.ts";
 
 export function escapeHtml(value: string): string {
@@ -190,6 +191,27 @@ const STYLE = `
     h2 { margin-top:44px; }
   }
   @media (max-width:420px) { .brand-name { position:absolute; width:1px; height:1px; overflow:hidden; clip:rect(0 0 0 0); white-space:nowrap; } }
+  input[type=email], select { min-height:44px; width:100%; padding:0 14px; border-radius:var(--r-sm); border:1px solid var(--line-strong); background:#121212; color:var(--ink); font:15px var(--sans); }
+  input[type=text].plain { font:15px var(--sans); }
+  input[aria-invalid=true], select[aria-invalid=true] { border-color:var(--danger); }
+  .welcome { display:grid; gap:26px; margin-top:28px; }
+  .welcome fieldset { border:0; padding:0; margin:0; min-width:0; }
+  .welcome legend { font-weight:600; font-size:14px; margin-bottom:4px; padding:0; }
+  .welcome .hint { margin-bottom:10px; }
+  .pair { display:grid; gap:18px; grid-template-columns:repeat(auto-fit,minmax(min(100%,240px),1fr)); }
+  .choices { display:flex; flex-wrap:wrap; gap:8px; }
+  .choice { display:inline-flex; align-items:center; gap:8px; min-height:44px; padding:0 14px; margin:0; border-radius:999px; border:1px solid var(--line-strong); background:var(--panel); font-weight:500; cursor:pointer; transition:border-color .15s var(--ease), background-color .15s var(--ease); }
+  .choice:has(input:checked) { border-color:var(--accent); background:var(--accent-bg); }
+  .choice input { accent-color:var(--accent); margin:0; }
+  .kits { display:grid; gap:10px; grid-template-columns:repeat(auto-fit,minmax(min(100%,200px),1fr)); }
+  .kit { display:grid; grid-template-columns:auto 1fr; gap:4px 10px; padding:14px 16px; margin:0; border-radius:var(--r); border:1px solid var(--line-strong); background:var(--panel); cursor:pointer; transition:border-color .15s var(--ease), background-color .15s var(--ease); }
+  .kit:has(input:checked) { border-color:var(--accent); background:var(--accent-bg); }
+  .kit input { accent-color:var(--accent); margin:4px 0 0; grid-row:span 2; }
+  .kit b { font-size:15px; }
+  .kit span { font-size:13.5px; color:var(--muted); font-weight:400; }
+  .field-error { color:var(--danger); font-size:13.5px; margin:6px 0 0; }
+  .consent { display:flex; gap:10px; align-items:flex-start; font-weight:400; font-size:14px; color:var(--muted); margin:0; cursor:pointer; }
+  .consent input { accent-color:var(--accent); margin:3px 0 0; }
   @media (prefers-reduced-motion: reduce) { * { transition:none !important; } }
 `;
 
@@ -199,7 +221,7 @@ const CHECK = `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" strok
 
 function page(title: string, content: string, opts: { signedIn?: boolean; width?: "narrow" | "reading" } = {}): string {
   const nav = opts.signedIn
-    ? `<a class="button quiet" href="/app">Open the app</a><form method="post" action="/auth/logout"><button class="button quiet" type="submit">Sign out</button></form>`
+    ? `<a class="button quiet" href="/app">Open the app</a><a class="button quiet" href="/welcome">Profile</a><form method="post" action="/auth/logout"><button class="button quiet" type="submit">Sign out</button></form>`
     : "";
   return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>${escapeHtml(title)}</title><style>${STYLE}</style></head>
@@ -459,7 +481,7 @@ ${boards}<form method="get" action="/board" class="panel"><label for="repo">Repo
 <h2>Active tokens</h2>${table}
 <h2>Recent agent activity</h2>${activity}
 <h2>Revoke everything</h2>
-<div class="panel danger-zone"><p>Revokes every agent token, signs you out, and deletes the stored GitHub authorization and your activity history. This cannot be undone.</p>
+<div class="panel danger-zone"><p>Revokes every agent token, signs you out, and deletes the stored GitHub authorization, your profile and your activity history. This cannot be undone.</p>
 <form method="post" action="/tokens/revoke-all"><button class="button quiet danger" type="submit">Revoke all tokens and sign out</button></form></div>`,
     { signedIn: true, width: "reading" },
   );
@@ -575,5 +597,57 @@ export function renderMessage(title: string, message: string): string {
   return page(
     `${title} · Company Brain`,
     `<div class="center"><div class="panel"><h1>${escapeHtml(title)}</h1><p class="muted">${escapeHtml(message)}</p><a class="button quiet" href="/">Back to home</a></div></div>`,
+  );
+}
+
+export function renderWelcome(opts: { login: string; values: WelcomeInput; errors: WelcomeProblems; editing: boolean; privacyUrl: string; failure?: string }): string {
+  const { values: v, errors: e } = opts;
+  const invalid = (k: keyof WelcomeProblems) => (e[k] ? ` aria-invalid="true" aria-describedby="${k}-error"` : "");
+  const err = (k: keyof WelcomeProblems) => (e[k] ? `<p class="field-error" id="${k}-error">${escapeHtml(e[k] as string)}</p>` : "");
+  const text = (id: keyof WelcomeProblems, label: string, type: string, value: string, extra: string) =>
+    `<div><label for="${id}">${label}</label><input type="${type}" class="plain" id="${id}" name="${id}" value="${escapeHtml(value)}" required${extra}${invalid(id)}>${err(id)}</div>`;
+  const option = (value: string, label: string, selected: string) => `<option value="${value}"${value === selected ? " selected" : ""}>${escapeHtml(label)}</option>`;
+  const pills = (name: string, type: "radio" | "checkbox", choices: Record<string, string>, chosen: string[]) =>
+    `<div class="choices">${Object.entries(choices)
+      .map(([value, label]) => `<label class="choice"><input type="${type}" name="${name}" value="${value}"${chosen.includes(value) ? " checked" : ""}${type === "radio" ? " required" : ""}>${escapeHtml(label)}</label>`)
+      .join("")}</div>`;
+  const summary = opts.failure
+    ? `<div class="notice error" role="alert">${escapeHtml(opts.failure)}</div>`
+    : Object.keys(e).length
+      ? `<div class="notice error" role="alert"><strong>Check the highlighted fields.</strong> ${Object.values(e).map((m) => escapeHtml(m as string)).join(" ")}</div>`
+      : "";
+  const kits = Object.entries(KITS)
+    .map(([value, k]) => `<label class="kit"><input type="radio" name="kit" value="${value}"${v.kit === value ? " checked" : ""} required><b>${escapeHtml(k.label)}</b><span>${escapeHtml(k.detail)}</span></label>`)
+    .join("");
+  const heading = opts.editing ? "Your profile" : "Welcome to Company Brain";
+  const lede = opts.editing
+    ? "Change what we know about you and your team. Choosing another kit adds its starter entries; nothing you wrote is changed."
+    : "Tell us about you and your team. We use it to fill your brain with a starter kit that fits, so it is useful from the first question instead of empty.";
+  return page(
+    `${heading} · Company Brain`,
+    `<h1>${heading}</h1>
+<p class="lede">${lede}</p>
+${summary}
+<form method="post" action="/welcome" class="welcome" novalidate>
+<div class="pair">
+${text("name", "Your name", "text", v.name, ` maxlength="80" autocomplete="name"`)}
+${text("email", "Work email", "email", v.email, ` maxlength="200" autocomplete="email" inputmode="email"`)}
+</div>
+<div class="pair">
+${text("company", "Company or team", "text", v.company, ` maxlength="100" autocomplete="organization"`)}
+<div><label for="role">Your role</label><select id="role" name="role" required${invalid("role")}><option value="">Choose one</option>${Object.entries(ROLES).map(([k, l]) => option(k, l, v.role)).join("")}</select>${err("role")}</div>
+</div>
+<fieldset${e.teamSize ? ' aria-describedby="teamSize-error"' : ""}><legend>How big is the team?</legend>${pills("teamSize", "radio", TEAM_SIZES, [v.teamSize])}${err("teamSize")}</fieldset>
+<fieldset><legend>What do you want it for?</legend><p class="hint">Pick any that apply. It shapes what we suggest first.</p>${pills("goals", "checkbox", GOALS, v.goals)}</fieldset>
+<fieldset><legend>Which AI agents do you use?</legend>${pills("agents", "checkbox", AGENT_CHOICES, v.agents)}</fieldset>
+<fieldset${e.kit ? ' aria-describedby="kit-error"' : ""}><legend>Starter kit</legend><p class="hint">Skills, rules, processes and ready-made agents to begin with. Edit or delete any of it later.</p><div class="kits">${kits}</div>${err("kit")}</fieldset>
+<label class="consent"><input type="checkbox" name="updates" value="yes"${v.updates ? " checked" : ""}>Email me occasional product updates.</label>
+<div class="row"><button class="button" type="submit">${opts.editing ? "Save profile" : "Set up my brain"}</button><p class="hint">Signed in as ${escapeHtml(opts.login)}. We keep this with your account and do not share it. <a href="${escapeHtml(opts.privacyUrl)}">Privacy</a></p></div>
+</form>${
+      opts.editing
+        ? ""
+        : `<div class="row" style="margin-top:18px"><form method="post" action="/auth/logout"><button class="button quiet" type="submit">Sign out</button></form><form method="post" action="/tokens/revoke-all"><button class="button quiet danger" type="submit">Revoke all tokens and sign out</button></form></div>`
+    }`,
+    { signedIn: opts.editing, width: "reading" },
   );
 }

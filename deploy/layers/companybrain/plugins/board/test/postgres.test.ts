@@ -5,6 +5,7 @@ import type pg from "pg";
 import { createAuth } from "../src/auth.ts";
 import { createPool, postgres } from "../src/db.ts";
 import { MAX_ENTRIES_PER_KIND, openStore, type Store } from "../src/store.ts";
+import { seedStarterKit } from "../src/starter.ts";
 import { counters, fakeGitHub, testConfig } from "./fixtures.ts";
 
 const url = process.env.TEST_DATABASE_URL;
@@ -91,5 +92,26 @@ test("real Postgres: locks hold across separate connection pools", { skip: !url 
       assert.ok(renewal.ok);
       assert.equal(renewal.post.releasedAt, null, `round ${round}`);
     }
+  });
+
+  await t.test("profiles upsert, and the starter kit seeds once across instances", async () => {
+    const base = { uid: 950, login: "pg-user", name: "Pat", email: "pat@acme.test", company: "Acme", role: "founder" as const, teamSize: "small" as const, goals: ["answers" as const], agents: ["codex" as const], kit: "both" as const, updates: true };
+    const s0 = stores[0] as Store;
+    await s0.saveProfile(base);
+    await (stores[1] as Store).saveProfile({ ...base, company: "Acme Rockets", updates: false });
+    const saved = await s0.profile(950);
+    assert.equal(saved?.company, "Acme Rockets");
+    assert.equal(saved?.updates, false);
+    assert.equal(saved?.askedAt, null);
+    await (stores[2] as Store).markAsked(950);
+    const asked = (await s0.profile(950))?.askedAt;
+    await s0.markAsked(950);
+    assert.equal((await s0.profile(950))?.askedAt, asked, "the first question is stamped once");
+    const profile = saved as NonNullable<typeof saved>;
+    await warm();
+    await Promise.all(stores.map((s) => seedStarterKit(s, profile, { about: "About pg-user", now: Date.now() })));
+    const rules = await s0.listEntries("rule", 950);
+    assert.equal(new Set(rules.map((r) => r.name)).size, rules.length, "no duplicate entries when instances seed at once");
+    assert.equal((await s0.listUploads(950)).length, 2);
   });
 });
