@@ -134,7 +134,7 @@ test("a request left half-done by a stopped run is picked up again instead of st
     const id = /Its task id is ([0-9a-f-]{36})/.exec(prompt)?.[1];
     calls++;
     if (calls === 1) return `{"tool": "work_update", "arguments": {"task_id": "${id}", "kind": "progress", "note": "Started."}}`;
-    if (calls === 2) return '{"final": "Ran out of ideas."}';
+    if (calls <= 10) return '{"tool": "whoami", "arguments": {}}';
     return worker()(prompt);
   });
   const created = (await (await api(env.h, env.cookie, "/api/app/requests", { repo: "acme/app", title: "Half done" })).json()) as { id: string };
@@ -184,4 +184,14 @@ test("a retry after changes are requested sees what the person asked for", async
   await env.settle();
   assert.ok(prompts.some((p) => p.includes("asked for changes: Cover the billing migration too.")));
   void t;
+});
+
+test("when the agent answers without submitting, its answer is submitted for review", async () => {
+  const env = await harness(async (prompt) => (prompt.includes("you called board_read") ? '{"final": "The focus is the personal site and its weekly activity feed."}' : '{"tool": "board_read", "arguments": {"repo": "acme/app"}}'));
+  const created = (await (await api(env.h, env.cookie, "/api/app/requests", { repo: "acme/app", title: "What is the focus?" })).json()) as { id: string };
+  await env.settle();
+  const post = await env.h.store.getPost(created.id);
+  assert.equal(post?.status, "review");
+  const updates = await env.h.store.workUpdates(created.id);
+  assert.match(updates.at(-1)?.body ?? "", /The focus is the personal site/);
 });

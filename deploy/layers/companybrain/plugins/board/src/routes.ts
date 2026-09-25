@@ -1213,6 +1213,12 @@ export function createApp(deps: AppDeps): Hono {
         },
       });
       await store.finishRun(id, outcome.status, outcome.answer);
+      if (forRequest && outcome.status === "done") {
+        const task = await store.getPost(forRequest.id);
+        if (task && !task.closedAt && ["open", "working", "changes"].includes(task.status ?? "open")) {
+          await store.advanceWork(forRequest.id, "submitted", clamp(outcome.answer, 8_000), { uid, login, client: principal.client }).catch(() => undefined);
+        }
+      }
       if (!profile.reflects) {
         await store.addOutcome({ id, uid, kind: "run", client: profile.id, goal, outcome: outcome.status, summary: outcome.answer, skills: [...skillsRead] }).catch(() => undefined);
       }
