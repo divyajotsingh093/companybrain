@@ -53,6 +53,7 @@ const AUTO_BUILD_EVERY_MS = 20 * 3_600_000;
 const AUTO_BUILDS_PER_CRON = 10;
 const MAX_GOAL = 2_000;
 const TEST_COST_IN_RUNS = 3;
+const LIBRARIAN_READS = 6;
 const GATES_PER_CRON = 3;
 
 const SESSION_COOKIE = "cb_session";
@@ -1150,6 +1151,7 @@ export function createApp(deps: AppDeps): Hono {
   const executeRun = async (uid: number, login: string, id: string, profile: AgentProfile, goal: string, allowChanges: boolean): Promise<void> => {
     const principal: Principal = { tokenId: `run:${id}`, uid, login, kind: "agent", client: profile.reflects ? "reflector" : "runner" };
     const skillsRead = new Set<string>();
+    let reads = 0;
     const record = async (step: Omit<RunStep, "at">) => store.addRunStep(id, { ...step, at: now() });
     let client: Client | null = null;
     let server: ReturnType<typeof createBoardServer> | null = null;
@@ -1181,6 +1183,7 @@ export function createApp(deps: AppDeps): Hono {
             const taken = (await store.listEntries("lesson", uid)).some((l) => l.name.toLowerCase() === wanted);
             return taken ? "A lesson with that name already exists. Write a new lesson with its own name." : null;
           }
+          if (readOnly && profile.builds && ++reads > LIBRARIAN_READS) return "You have read enough. Write the entries the sources support now with brain_write, or finish.";
           if (readOnly) return null;
           if (allowChanges && !profile.builds) return null;
           if (!CREATE_WRITES.has(tool)) return profile.builds ? "The librarian only reads sources and adds new entries." : "Changes are off for this run, so this tool is not allowed. The person can allow changes when starting a run.";

@@ -190,3 +190,13 @@ test("a model thinking out loud is asked again before its prose is taken as the 
   assert.equal(run.answer, "Done properly.\n\nThis run made no changes.");
   assert.equal(run.steps[0]?.kind, "error");
 });
+
+test("the librarian is stopped from reading forever and told to write", async () => {
+  const env = await harness(['{"tool": "whoami", "arguments": {}}']);
+  const started = await api(env.h, env.cookie, "/api/app/build", { now: true });
+  const { id } = (await started.json()) as { id: string };
+  await env.settle();
+  const run = ((await (await api(env.h, env.cookie, `/api/app/runs/${id}`)).json()) as { run: AgentRun }).run;
+  assert.equal(run.steps.filter((s) => s.kind === "call").length, 6);
+  assert.match(run.steps.find((s) => s.kind === "blocked")?.text ?? "", /read enough/);
+});
