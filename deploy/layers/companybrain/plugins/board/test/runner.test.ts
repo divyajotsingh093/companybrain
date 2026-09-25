@@ -136,6 +136,14 @@ test("replies are read leniently, whatever shape a free model answers in", () =>
   assert.deepEqual(parseAction("Plain prose answer."), { thought: "", final: "Plain prose answer." });
   assert.deepEqual(parseAction('I will {maybe} do this: {"tool":"whoami","arguments":{}}'), { thought: "", tool: "whoami", arguments: {} });
   assert.deepEqual(parseAction('{"tool": "brain_write", "arguments": {"body": "cut off'), { thought: "", invalid: true });
+  assert.deepEqual(
+    parseAction("<tool_call>get_file\n<arg_key>repo</arg_key>\n<arg_value>acme/app</arg_value><arg_key>path</arg_key>\n<arg_value>docs/release.md</arg_value>\n</tool_call>"),
+    { thought: "", tool: "get_file", arguments: { repo: "acme/app", path: "docs/release.md" } },
+    "a model's own tool-call format is understood, not saved as the answer",
+  );
+  assert.deepEqual(parseAction('<tool_call>\n{"name": "brain_search", "arguments": {"query": "release"}}\n</tool_call>'), { thought: "", tool: "brain_search", arguments: { query: "release" } });
+  assert.deepEqual(parseAction('<function=skill_read>{"name": "Ship"}</function>'), { thought: "", tool: "skill_read", arguments: { name: "Ship" } });
+  assert.deepEqual(parseAction("<tool_call>get_file <arg_key>repo"), { thought: "", invalid: true });
 });
 
 test("without changes allowed a run only reads and adds; allowing changes unlocks the rest", async () => {

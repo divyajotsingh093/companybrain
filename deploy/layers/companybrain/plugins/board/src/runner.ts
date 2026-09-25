@@ -37,8 +37,13 @@ const PROTOCOL = [
   UNTRUSTED_NOTE,
 ].join("\n");
 
+const argsOf = (value: unknown): Record<string, unknown> => (value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : {});
+
 function actionOf(obj: Record<string, unknown>): Action | null {
   const thought = typeof obj.thought === "string" ? obj.thought : "";
+  if (typeof obj.tool !== "string" && typeof obj.final !== "string" && typeof obj.name === "string" && obj.name && "arguments" in obj) {
+    return { thought, tool: obj.name, arguments: argsOf(typeof obj.arguments === "string" ? safeJson(obj.arguments) : obj.arguments) };
+  }
   if (typeof obj.tool === "string" && obj.tool) {
     const args = obj.arguments && typeof obj.arguments === "object" && !Array.isArray(obj.arguments) ? (obj.arguments as Record<string, unknown>) : {};
     return { thought, tool: obj.tool, arguments: args };
@@ -47,9 +52,35 @@ function actionOf(obj: Record<string, unknown>): Action | null {
   return null;
 }
 
+function safeJson(raw: string): unknown {
+  try {
+    return JSON.parse(raw);
+  } catch {
+    return raw;
+  }
+}
+
+function nativeCall(text: string): Action | null {
+  const tagged = /<tool_call>\s*([\w.-]+)\s*((?:<arg_key>[\s\S]*?<\/arg_key>\s*<arg_value>[\s\S]*?<\/arg_value>\s*)*)<\/tool_call>/.exec(text);
+  if (tagged) {
+    const args: Record<string, unknown> = {};
+    for (const m of (tagged[2] ?? "").matchAll(/<arg_key>([\s\S]*?)<\/arg_key>\s*<arg_value>([\s\S]*?)<\/arg_value>/g)) {
+      const raw = (m[2] ?? "").trim();
+      args[(m[1] ?? "").trim()] = /^[[{0-9"tfn-]/.test(raw) ? safeJson(raw) : raw;
+    }
+    return { thought: "", tool: tagged[1] as string, arguments: args };
+  }
+  const fn = /<function=([\w.-]+)>\s*([\s\S]*?)\s*<\/function>/.exec(text);
+  if (fn) return { thought: "", tool: fn[1] as string, arguments: argsOf(safeJson(fn[2] || "{}")) };
+  return null;
+}
+
 export function parseAction(reply: string): Action {
   const text = reply.replace(/<think>[\s\S]*?(<\/think>|$)/g, "").replace(/```(?:json)?/g, "").trim();
-  if (!text.includes("{")) return { thought: "", final: text };
+  const native = nativeCall(text);
+  if (native) return native;
+  const looksLikeCall = /<tool_call|<function=|<\|tool_call/.test(text);
+  if (!text.includes("{")) return looksLikeCall ? { thought: "", invalid: true } : { thought: "", final: text };
   for (let start = text.indexOf("{"), tries = 0; start >= 0 && tries < 20; start = text.indexOf("{", start + 1), tries++) {
     for (let end = text.lastIndexOf("}"); end > start; end = text.lastIndexOf("}", end - 1)) {
       let parsed: unknown;
