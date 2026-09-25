@@ -153,39 +153,73 @@ test("a question about something genuinely absent still returns nothing", async 
 });
 
 test("models are tried in order: OpenRouter, then the AI Gateway, then a model the free tier allows", async () => {
-  const { createModel } = await import("../src/brain.ts");
-  const calls: Array<{ url: string; auth: string | null; model: string }> = [];
+  const { createModel, modelSummary } = await import("../src/brain.ts");
+  const calls: Array<{ url: string; auth: string | null; model: string; title: string | null }> = [];
   const reply = (status: number, content = "ok") => new Response(JSON.stringify({ choices: [{ message: { content } }] }), { status });
   const fetchWith = (answer: (url: string, model: string) => Response) =>
     (async (url: string, init: RequestInit) => {
       const model = (JSON.parse(String(init.body)) as { model: string }).model;
-      calls.push({ url, auth: new Headers(init.headers).get("authorization"), model });
+      const headers = new Headers(init.headers);
+      calls.push({ url, auth: headers.get("authorization"), model, title: headers.get("x-title") });
       return answer(url, model);
     }) as unknown as typeof fetch;
+  const run = async (m: ReturnType<typeof createModel>) => {
+    let by: { model: string; fallback: boolean } | undefined;
+    const text = await m!("hi", { onModel: (model, fallback) => (by = { model, fallback }) });
+    return { text, by };
+  };
 
   assert.equal(createModel({}, fetchWith(() => reply(200)), async () => "oidc"), null, "with no provider configured there is no model, so Ask says so plainly");
+  assert.equal(modelSummary({}), null);
 
-  const openrouter = createModel({ OPENROUTER_API_KEY: "or-key", VERCEL: "1" }, fetchWith(() => reply(200)), async () => "oidc");
-  assert.equal(await openrouter?.("hi"), "ok");
-  assert.equal(calls.length, 1);
-  assert.match(calls[0]?.url ?? "", /openrouter\.ai/);
-  assert.equal(calls[0]?.auth, "Bearer or-key");
-  assert.equal(calls[0]?.model, "anthropic/claude-sonnet-5");
+  const env = { OPENROUTER_API_KEY: "or-key", VERCEL: "1", PUBLIC_URL: "https://board.test" };
+  assert.deepEqual(modelSummary(env), { model: "anthropic/claude-sonnet-5", provider: "OpenRouter", fallback: "anthropic/claude-sonnet-5" });
+  assert.deepEqual(modelSummary({ VERCEL: "1" }), { model: "anthropic/claude-sonnet-5", provider: "Vercel AI Gateway", fallback: "openai/gpt-4.1-mini" });
 
-  calls.length = 0;
-  const outage = createModel({ OPENROUTER_API_KEY: "or-key", VERCEL: "1" }, fetchWith((url) => (url.includes("openrouter") ? reply(502) : reply(200, "from the gateway"))), async () => "oidc-token");
-  assert.equal(await outage?.("hi"), "from the gateway", "an OpenRouter outage falls through to the AI Gateway");
-  assert.equal(calls.at(-1)?.auth, "Bearer oidc-token", "on Vercel the gateway needs no secret");
+  assert.deepEqual(await run(createModel(env, fetchWith(() => reply(200)), async () => "oidc")), { text: "ok", by: { model: "anthropic/claude-sonnet-5", fallback: false } });
+  assert.deepEqual(calls, [{ url: "https://openrouter.ai/api/v1/chat/completions", auth: "Bearer or-key", model: "anthropic/claude-sonnet-5", title: "Company Brain" }]);
 
   calls.length = 0;
-  const freeTier = createModel({ VERCEL: "1" }, fetchWith((_url, model) => (model === "anthropic/claude-sonnet-5" ? reply(403) : reply(200, "fallback"))), async () => "t");
-  assert.equal(await freeTier?.("hi"), "fallback", "a model the plan cannot use falls back to one it can");
+  const outage = await run(createModel(env, fetchWith((url) => (url.includes("openrouter") ? reply(502) : reply(200, "from the gateway"))), async () => "oidc-token"));
+  assert.deepEqual(outage, { text: "from the gateway", by: { model: "anthropic/claude-sonnet-5", fallback: true } });
+  assert.deepEqual(calls.map((c) => [c.url.includes("openrouter") ? "openrouter" : "gateway", c.model, c.auth]), [
+    ["openrouter", "anthropic/claude-sonnet-5", "Bearer or-key"],
+    ["gateway", "anthropic/claude-sonnet-5", "Bearer oidc-token"],
+  ], "a 502 is not a 403, so the free-tier model is not tried");
+
+  calls.length = 0;
+  const freeTier = await run(createModel({ VERCEL: "1" }, fetchWith((_url, model) => (model === "anthropic/claude-sonnet-5" ? reply(403) : reply(200, "fallback"))), async () => "t"));
+  assert.deepEqual(freeTier, { text: "fallback", by: { model: "openai/gpt-4.1-mini", fallback: true } });
   assert.deepEqual(calls.map((c) => c.model), ["anthropic/claude-sonnet-5", "openai/gpt-4.1-mini"]);
+
+  calls.length = 0;
+  await assert.rejects(() => createModel(env, fetchWith(() => reply(400)), async () => "t")!("hi"), /model_unavailable_400$/);
+  assert.equal(calls.length, 1, "a request every provider would reject is not retried");
+
+  calls.length = 0;
+  let oidcCalls = 0;
+  await assert.rejects(
+    () => createModel({ VERCEL: "1" }, fetchWith(() => reply(200)), async () => {
+      oidcCalls++;
+      throw new Error("no token here");
+    })!("hi"),
+    /model_unavailable_auth$/,
+  );
+  assert.equal(oidcCalls, 1, "a platform identity that cannot be fetched is tried once, and no request is sent");
+  assert.equal(calls.length, 0);
+
+  const same = createModel({ VERCEL: "1", AI_GATEWAY_FALLBACK_MODEL: "anthropic/claude-sonnet-5" }, fetchWith(() => reply(403)), async () => "t");
+  calls.length = 0;
+  await assert.rejects(() => same!("hi"), /model_unavailable_403$/);
+  assert.equal(calls.length, 1, "a fallback that is the same model is not asked twice");
 
   const keyed = createModel({ AI_GATEWAY_API_KEY: "k-123" }, fetchWith(() => reply(200)), async () => "oidc-should-not-be-used");
   await keyed?.("hi");
   assert.equal(calls.at(-1)?.auth, "Bearer k-123", "an explicit gateway key wins over the platform identity");
 
-  const failing = createModel({ VERCEL: "1" }, fetchWith(() => reply(401)), async () => "t");
-  await assert.rejects(() => failing!("hi"), /model_unavailable_401_401/, "when every provider fails it is a model failure, never an answer");
+  const gone = new AbortController();
+  gone.abort();
+  calls.length = 0;
+  await assert.rejects(() => createModel(env, fetchWith(() => reply(200)), async () => "t")!("hi", { signal: gone.signal }), /model_unavailable_cancelled/);
+  assert.equal(calls.length, 0, "nothing is spent once the person asking has gone");
 });

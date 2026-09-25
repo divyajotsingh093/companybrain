@@ -109,7 +109,12 @@ export async function indexRepo(github: GitHubClient, repo: string): Promise<Ind
   return { scanned, indexed, skipped };
 }
 
-export type Model = (prompt: string) => Promise<string>;
+export interface ModelOptions {
+  signal?: AbortSignal;
+  onModel?: (model: string, fallback: boolean) => void;
+}
+
+export type Model = (prompt: string, opts?: ModelOptions) => Promise<string>;
 
 export interface Turn {
   question: string;
@@ -119,6 +124,7 @@ export interface Turn {
 export interface Answer {
   answer: string;
   sources: Array<{ title: string; source: string; kind: string; snippet: string }>;
+  answeredBy?: { model: string; fallback: boolean };
 }
 
 export const MAX_HISTORY_TURNS = 4;
@@ -148,10 +154,17 @@ export function buildPrompt(question: string, found: Found[], history: Turn[] = 
   ].join("\n");
 }
 
-export async function answerQuestion(opts: { question: string; found: Found[]; model: Model; history?: Turn[] }): Promise<Answer> {
+export async function answerQuestion(opts: { question: string; found: Found[]; model: Model; history?: Turn[]; signal?: AbortSignal }): Promise<Answer> {
   if (!opts.found.length) return { answer: NO_SOURCES, sources: [] };
-  const answer = await opts.model(buildPrompt(opts.question, opts.found, opts.history ?? []));
+  let answeredBy: Answer["answeredBy"];
+  const answer = await opts.model(buildPrompt(opts.question, opts.found, opts.history ?? []), {
+    ...(opts.signal ? { signal: opts.signal } : {}),
+    onModel: (model, fallback) => {
+      answeredBy = { model, fallback };
+    },
+  });
   return {
+    ...(answeredBy ? { answeredBy } : {}),
     answer: answer.trim(),
     sources: opts.found.map((f) => ({ title: f.title, source: f.source, kind: f.kind, snippet: f.snippet })),
   };
@@ -168,13 +181,16 @@ const OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions";
 const GATEWAY_URL = "https://ai-gateway.vercel.sh/v1/chat/completions";
 const DEFAULT_MODEL = "anthropic/claude-sonnet-5";
 const FREE_TIER_MODEL = "openai/gpt-4.1-mini";
+const ANSWER_DEADLINE_MS = 90_000;
+const HOPELESS = new Set([400, 413, 422]);
 
 interface Provider {
-  name: string;
+  group: "openrouter" | "gateway";
   url: string;
   model: string;
   token: () => Promise<string>;
   headers: Record<string, string>;
+  onlyAfterForbidden: boolean;
 }
 
 export function modelProviders(env: NodeJS.ProcessEnv, oidc: () => Promise<string> = getVercelOidcToken): Provider[] {
@@ -182,11 +198,12 @@ export function modelProviders(env: NodeJS.ProcessEnv, oidc: () => Promise<strin
   const openrouter = env.OPENROUTER_API_KEY;
   if (openrouter) {
     list.push({
-      name: "openrouter",
+      group: "openrouter",
       url: OPENROUTER_URL,
       model: env.OPENROUTER_MODEL || DEFAULT_MODEL,
       token: async () => openrouter,
       headers: { "x-title": "Company Brain", ...(env.PUBLIC_URL ? { "http-referer": env.PUBLIC_URL } : {}) },
+      onlyAfterForbidden: false,
     });
   }
   const key = env.AI_GATEWAY_API_KEY;
@@ -194,45 +211,78 @@ export function modelProviders(env: NodeJS.ProcessEnv, oidc: () => Promise<strin
     const token = async () => key || (await oidc());
     const primary = env.AI_GATEWAY_MODEL || DEFAULT_MODEL;
     const fallback = env.AI_GATEWAY_FALLBACK_MODEL || FREE_TIER_MODEL;
-    list.push({ name: "gateway", url: GATEWAY_URL, model: primary, token, headers: {} });
-    if (fallback !== primary) list.push({ name: "gateway", url: GATEWAY_URL, model: fallback, token, headers: {} });
+    list.push({ group: "gateway", url: GATEWAY_URL, model: primary, token, headers: {}, onlyAfterForbidden: false });
+    if (fallback !== primary) list.push({ group: "gateway", url: GATEWAY_URL, model: fallback, token, headers: {}, onlyAfterForbidden: true });
   }
   return list;
 }
 
-export const modelName = (env: NodeJS.ProcessEnv): string => {
-  const first = modelProviders(env, async () => "")[0];
-  return first ? `${first.model} via ${first.name === "openrouter" ? "OpenRouter" : "Vercel AI Gateway"}` : DEFAULT_MODEL;
-};
+const PROVIDER_LABEL = { openrouter: "OpenRouter", gateway: "Vercel AI Gateway" } as const;
+
+export function modelSummary(env: NodeJS.ProcessEnv): { model: string; provider: string; fallback: string | null } | null {
+  const list = modelProviders(env, async () => "");
+  const first = list[0];
+  if (!first) return null;
+  return { model: first.model, provider: PROVIDER_LABEL[first.group], fallback: list[1]?.model ?? null };
+}
 
 export function createModel(env: NodeJS.ProcessEnv, fetchImpl: typeof fetch = fetch, oidc: () => Promise<string> = getVercelOidcToken): Model | null {
   const providers = modelProviders(env, oidc);
   if (!providers.length) return null;
-  return async (prompt: string) => {
+  return async (prompt, opts = {}) => {
+    const deadline = AbortSignal.any([AbortSignal.timeout(ANSWER_DEADLINE_MS), ...(opts.signal ? [opts.signal] : [])]);
     const failures: string[] = [];
-    for (const p of providers) {
+    const tokens = new Map<Provider["group"], Promise<string>>();
+    const deadGroups = new Set<Provider["group"]>();
+    let previous: number | null = null;
+    for (const [i, p] of providers.entries()) {
+      if (deadline.aborted) break;
+      if (deadGroups.has(p.group) || (p.onlyAfterForbidden && previous !== 403)) continue;
+      let token: string;
+      try {
+        if (!tokens.has(p.group)) tokens.set(p.group, p.token());
+        token = await (tokens.get(p.group) as Promise<string>);
+      } catch {
+        deadGroups.add(p.group);
+        failures.push("auth");
+        console.error(`model ${p.group} auth unavailable`);
+        continue;
+      }
       try {
         const res = await fetchImpl(p.url, {
           method: "POST",
-          headers: { authorization: `Bearer ${await p.token()}`, "content-type": "application/json", ...p.headers },
+          headers: { authorization: `Bearer ${token}`, "content-type": "application/json", ...p.headers },
           body: JSON.stringify({ model: p.model, max_tokens: 900, messages: [{ role: "user", content: prompt }] }),
-          signal: AbortSignal.timeout(MODEL_TIMEOUT_MS),
+          signal: AbortSignal.any([deadline, AbortSignal.timeout(MODEL_TIMEOUT_MS)]),
         });
+        previous = res.status;
         if (!res.ok) {
           failures.push(String(res.status));
-          console.error(`model ${p.name} ${p.model} failed with ${res.status}`);
+          console.error(`model ${p.group} ${p.model} failed with ${res.status}`);
+          if (HOPELESS.has(res.status)) break;
           continue;
         }
-        const body = (await res.json()) as { choices?: Array<{ message?: { content?: string } }> };
+        let body: { choices?: Array<{ message?: { content?: string } }> };
+        try {
+          body = (await res.json()) as typeof body;
+        } catch {
+          failures.push("bad_body");
+          console.error(`model ${p.group} ${p.model} returned a body that is not JSON`);
+          continue;
+        }
         const text = body.choices?.[0]?.message?.content;
-        if (text) return text;
+        if (text) {
+          opts.onModel?.(p.model, i > 0);
+          return text;
+        }
         failures.push("empty");
-        console.error(`model ${p.name} ${p.model} returned no text`);
+        console.error(`model ${p.group} ${p.model} returned no text`);
       } catch (err) {
-        failures.push(err instanceof Error && err.name === "TimeoutError" ? "timeout" : "network");
-        console.error(`model ${p.name} ${p.model} unreachable: ${err instanceof Error ? err.name : typeof err}`);
+        previous = null;
+        failures.push(err instanceof Error && err.name === "TimeoutError" ? "timeout" : deadline.aborted ? "cancelled" : "network");
+        console.error(`model ${p.group} ${p.model} unreachable: ${err instanceof Error ? err.name : typeof err}`);
       }
     }
-    throw new Error(`model_unavailable_${failures.join("_")}`);
+    throw new Error(`model_unavailable_${failures.join("_") || "cancelled"}`);
   };
 }

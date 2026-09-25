@@ -6,7 +6,7 @@ interface GatewayView {
   servers: Array<{ name: string; url: string; hasToken: boolean; createdAt: number }>;
   calls: Array<{ at: number; client: string; subject: string | null; ok: boolean }>;
   max: number;
-  model: { configured: boolean; name: string; dailyLimit: number };
+  model: { configured: boolean; summary: { model: string; provider: string; fallback: string | null } | null; dailyLimit: number };
   mcpUrl: string;
   now: number;
 }
@@ -182,7 +182,7 @@ export function GatewayScreen(): JSX.Element {
         </Heading>
         <Card theme={THEME}>
           <Stack gap={6}>
-            <Text theme={THEME}>{view.model.configured ? `Ask answers with ${view.model.name} through Vercel AI Gateway.` : "No model is configured, so Ask cannot answer yet."}</Text>
+            <Text theme={THEME}>{view.model.configured && view.model.summary ? `Ask answers with ${view.model.summary.model} through ${view.model.summary.provider}${view.model.summary.fallback ? `, falling back to ${view.model.summary.fallback}` : ""}.` : view.model.configured ? "Ask has a model configured." : "No model is configured, so Ask cannot answer yet."}</Text>
             <Caption theme={THEME}>{`UP TO ${view.model.dailyLimit} QUESTIONS PER PERSON PER DAY`}</Caption>
           </Stack>
         </Card>

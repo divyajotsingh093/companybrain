@@ -5,7 +5,7 @@ import { deleteCookie, getCookie, setCookie } from "hono/cookie";
 import { createHash, randomBytes } from "node:crypto";
 import type { AccessChecker } from "./access.ts";
 import { canModerate, canUseBoard } from "./access.ts";
-import { answerQuestion, createModel, indexRepo, type Model, modelName, readHistory, titleOf } from "./brain.ts";
+import { answerQuestion, createModel, indexRepo, type Model, modelSummary, readHistory, titleOf } from "./brain.ts";
 import { GATEWAY_NAME, gatewayUrlProblem, MAX_GATEWAYS, openUpstream, publicFetch, sealGatewayToken } from "./gateway.ts";
 import type { Auth, Principal } from "./auth.ts";
 import type { Config } from "./config.ts";
@@ -668,7 +668,7 @@ export function createApp(deps: AppDeps): Hono {
     const principal = await session(c);
     if (!principal) return c.json({ error: "sign_in" }, 401);
     const [servers, calls] = await Promise.all([store.listGateways(principal.uid), store.auditTrail(principal.uid, 50, "gateway_call")]);
-    return c.json({ servers, calls, max: MAX_GATEWAYS, model: { configured: model !== null, name: modelName(process.env), dailyLimit: ASK_PER_DAY }, mcpUrl: `${config.publicUrl}/mcp`, now: now() });
+    return c.json({ servers, calls, max: MAX_GATEWAYS, model: { configured: model !== null, summary: modelSummary(process.env), dailyLimit: ASK_PER_DAY }, mcpUrl: `${config.publicUrl}/mcp`, now: now() });
   });
 
   app.post("/api/app/gateway", jsonLimit, async (c) => {
@@ -781,7 +781,7 @@ export function createApp(deps: AppDeps): Hono {
       await store.audit({ uid: principal.uid, tokenId: "web", client: "web", tool: "ask", subject: cleanLine(payload.question, 201), ok: false }).catch(() => undefined);
     }
     try {
-      const answer = await answerQuestion({ question: payload.question, found, model, history });
+      const answer = await answerQuestion({ question: payload.question, found, model, history, signal: c.req.raw.signal });
       await store.markAsked(principal.uid).catch(() => undefined);
       return c.json({ ...answer, related: [...related.values()].slice(0, 8) });
     } catch {

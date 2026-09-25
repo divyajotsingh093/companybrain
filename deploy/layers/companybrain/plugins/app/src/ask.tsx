@@ -21,6 +21,7 @@ export interface Turn {
   sources: AskSource[];
   related: Related[];
   kinds?: string[];
+  answeredBy?: { model: string; fallback: boolean };
 }
 
 export interface AskScreenProps {
@@ -366,12 +367,12 @@ export function AskScreen({ thread, setThread, canAsk, seed, autoAsk, onOpenGrap
     setFailure(null);
     if (typed) setDraft("");
     try {
-      const result = await post<{ answer: string; sources?: AskSource[]; related?: Related[] }>("/api/app/ask", {
+      const result = await post<{ answer: string; sources?: AskSource[]; related?: Related[]; answeredBy?: { model: string; fallback: boolean } }>("/api/app/ask", {
         question,
         kinds: scope.length ? scope : undefined,
         history: base.slice(-HISTORY).map((t) => ({ question: t.question, answer: t.answer })),
       });
-      const turn: Turn = { question, answer: result.answer, sources: result.sources ?? [], related: result.related ?? [], ...(scope.length ? { kinds: scope } : {}) };
+      const turn: Turn = { question, answer: result.answer, sources: result.sources ?? [], related: result.related ?? [], ...(scope.length ? { kinds: scope } : {}), ...(result.answeredBy ? { answeredBy: result.answeredBy } : {}) };
       setThread([...base, turn]);
       setActive({ turn: base.length, source: null });
       setFresh(base.length);
@@ -472,6 +473,7 @@ export function AskScreen({ thread, setThread, canAsk, seed, autoAsk, onOpenGrap
               </Stack>
 
               <Answer text={turn.answer} sources={turn.sources} activeSource={active.turn === i ? active.source : null} onCite={(s) => cite(i, s)} />
+              {turn.answeredBy?.fallback ? <Caption theme={THEME}>{`Answered by ${turn.answeredBy.model}, a fallback model, because the main model was unavailable.`}</Caption> : null}
 
               <Stack direction="row" gap={6} align="center" wrap>
                 <Button variant="ghost" size="sm" theme={THEME} onClick={() => void copy(turn, i)}>

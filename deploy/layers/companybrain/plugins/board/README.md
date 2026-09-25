@@ -102,6 +102,11 @@ they want their agents to see; organisation repositories need the app installed 
 | `BOARD_TOKEN_TTL_DAYS`, `BOARD_SESSION_TTL_DAYS` | Token lifetimes |
 | `BOARD_REQUESTS_PER_MINUTE` | Request limit per user, shared across that user's tokens |
 | `PORT` | Listen port, default 8787 |
+| `OPENROUTER_API_KEY` | When set, questions are answered through OpenRouter first |
+| `OPENROUTER_MODEL` | OpenRouter model, default `anthropic/claude-sonnet-5` |
+| `AI_GATEWAY_API_KEY` | Vercel AI Gateway key; on Vercel the project's OIDC identity is used when unset |
+| `AI_GATEWAY_MODEL` | Gateway model, default `anthropic/claude-sonnet-5` |
+| `AI_GATEWAY_FALLBACK_MODEL` | Gateway model tried only when the main one is refused with 403, as on the free tier; default `openai/gpt-4.1-mini` |
 
 ## Connect agents
 
