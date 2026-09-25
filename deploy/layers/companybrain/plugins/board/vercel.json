@@ -12,6 +12,14 @@
     {
       "path": "/cron/build",
       "schedule": "47 6 * * *"
+    },
+    {
+      "path": "/cron/reflect",
+      "schedule": "7 7 * * *"
+    },
+    {
+      "path": "/cron/gate",
+      "schedule": "37 7 * * *"
     }
   ]
 }

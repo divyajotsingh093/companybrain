@@ -1,6 +1,7 @@
 import { Fragment, useEffect, useRef, useState, type JSX, type KeyboardEvent, type ReactNode, type RefObject } from "react";
 import { AlertBanner, Button, Caption, EASE_OUT, Heading, Skeleton, Stack, Text, tokens, usePal } from "./ui";
 import { ASK_KINDS, KindBadge, KindChip, KindDot, kindColor, kindName } from "./kinds";
+import { Feedback } from "./learning";
 import { ApiError, EASE, ERROR_COPY, THEME, injectCss, post, reason, useReducedMotion, useWidth } from "./shared";
 
 export interface AskSource {
@@ -22,6 +23,7 @@ export interface Turn {
   related: Related[];
   kinds?: string[];
   answeredBy?: { model: string; fallback: boolean };
+  outcomeId?: string;
 }
 
 export interface AskScreenProps {
@@ -367,12 +369,12 @@ export function AskScreen({ thread, setThread, canAsk, seed, autoAsk, onOpenGrap
     setFailure(null);
     if (typed) setDraft("");
     try {
-      const result = await post<{ answer: string; sources?: AskSource[]; related?: Related[]; answeredBy?: { model: string; fallback: boolean } }>("/api/app/ask", {
+      const result = await post<{ answer: string; outcomeId?: string; sources?: AskSource[]; related?: Related[]; answeredBy?: { model: string; fallback: boolean } }>("/api/app/ask", {
         question,
         kinds: scope.length ? scope : undefined,
         history: base.slice(-HISTORY).map((t) => ({ question: t.question, answer: t.answer })),
       });
-      const turn: Turn = { question, answer: result.answer, sources: result.sources ?? [], related: result.related ?? [], ...(scope.length ? { kinds: scope } : {}), ...(result.answeredBy ? { answeredBy: result.answeredBy } : {}) };
+      const turn: Turn = { question, answer: result.answer, sources: result.sources ?? [], related: result.related ?? [], ...(scope.length ? { kinds: scope } : {}), ...(result.answeredBy ? { answeredBy: result.answeredBy } : {}), ...(result.outcomeId ? { outcomeId: result.outcomeId } : {}) };
       setThread([...base, turn]);
       setActive({ turn: base.length, source: null });
       setFresh(base.length);
@@ -479,6 +481,7 @@ export function AskScreen({ thread, setThread, canAsk, seed, autoAsk, onOpenGrap
                 <Button variant="ghost" size="sm" theme={THEME} onClick={() => void copy(turn, i)}>
                   {copied?.turn === i ? (copied.ok ? "Copied" : "Could not copy") : "Copy answer"}
                 </Button>
+                {turn.outcomeId ? <Feedback key={turn.outcomeId} id={turn.outcomeId} subject="answer" /> : null}
                 {wide && turn.sources.length && !current ? (
                   <Button variant="ghost" size="sm" theme={THEME} onClick={() => setActive({ turn: i, source: null })}>
                     Show its {turn.sources.length === 1 ? "source" : `${turn.sources.length} sources`}

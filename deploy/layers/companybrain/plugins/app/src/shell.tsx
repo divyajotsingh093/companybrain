@@ -1,6 +1,7 @@
 import {
   Archive,
   Brain,
+  ChartLineUp,
   ChatCircleText,
   FlowArrow,
   GraduationCap,
@@ -44,6 +45,7 @@ const ICONS: Record<string, typeof Brain> = {
   agents: Robot,
   run: Play,
   build: Sparkle,
+  learning: ChartLineUp,
   gateway: PlugsConnected,
   decisions: Signpost,
 };

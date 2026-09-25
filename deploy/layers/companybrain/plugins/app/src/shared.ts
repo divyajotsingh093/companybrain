@@ -7,6 +7,7 @@ export const EASE = "cubic-bezier(0.23, 1, 0.32, 1)";
 export const ERROR_COPY: Record<string, string> = {
   already_answered: "That was already answered somewhere else. Reloading it now.",
   busy: "An agent is already running. Wait for it to finish, then start the next one.",
+  changed_since: "The entry changed after this was proposed. Reload to see the latest version before you decide.",
   sign_in: "Your session expired. Reload to sign in again.",
   entry_quota: "You have reached the limit for this kind. Remove one first.",
   empty_name: "That name is empty once cleaned up. Try plain text.",
@@ -29,6 +30,7 @@ export const ERROR_COPY: Record<string, string> = {
   document_quota: "You have reached the limit for stored documents. Remove a file or a source first.",
   needs_note: "Say what needs to change before sending it back.",
   not_in_review: "That request is no longer waiting on your review. Reloading it now.",
+  wrong_state: "That change already moved on. Reloading it now.",
 };
 
 export const CLIENT_LABEL: Record<string, string> = {
@@ -38,6 +40,7 @@ export const CLIENT_LABEL: Record<string, string> = {
   grok: "Grok",
   web: "Web",
   import: "Import",
+  reflector: "Reflector",
 };
 
 export const clientName = (client: string): string => CLIENT_LABEL[client] ?? client.replace(/^oauth:(.*)$/, "$1 connector");

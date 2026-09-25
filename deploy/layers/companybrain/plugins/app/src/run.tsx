@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, type JSX } from "react";
 import { AlertBanner, Button, Caption, Card, EmptyState, Heading, Skeleton, Stack, StatusBadge, Tag, Text, TextArea, usePal } from "./ui";
 import { THEME, get, post, reason, when } from "./shared";
+import { Feedback } from "./learning";
 
 interface RunStep {
   at: number;
@@ -321,6 +322,7 @@ export function RunScreen({ mode }: { mode: "run" | "build" }): JSX.Element {
               <StatusBadge status={STATUS_LABEL[shown.status][0]}>{STATUS_LABEL[shown.status][1]}</StatusBadge>
             </Stack>
             <Timeline run={shown} />
+            {shown.status === "running" ? null : <Feedback key={shown.id} id={shown.id} subject="run" prompt="Did this run do what you asked?" />}
           </Stack>
         </Card>
       ) : null}

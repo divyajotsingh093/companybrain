@@ -130,6 +130,23 @@ test("real Postgres: locks hold across separate connection pools", { skip: !url 
     assert.equal(await s0.createRun({ id: "run-next", uid: 960, agent: "assistant", goal: "g", allowActions: false }), true, "a finished run frees the slot");
   });
 
+  await t.test("the improvement queue and graded history work on real Postgres", async () => {
+    const s0 = stores[0] as Store;
+    await s0.putEntry({ kind: "skill", ownerUid: 970, name: "Ship", body: "v1", author: "web" });
+    await s0.putEntry({ kind: "skill", ownerUid: 970, name: "Ship", body: "v2", author: "codex" });
+    assert.equal(await s0.humanTouched(970, "skill", "ship"), true);
+    await s0.addOutcome({ id: "pg-o1", uid: 970, kind: "run", client: "assistant", goal: "g1", outcome: "done", summary: "s", skills: ["Ship"], at: Date.now() - 3 * 86_400_000 });
+    await s0.addOutcome({ id: "pg-o2", uid: 970, kind: "run", client: "assistant", goal: "g2", outcome: "done", summary: "s", skills: [], at: Date.now() - 3 * 86_400_000 });
+    await s0.scoreOutcome(970, "pg-o1", 1);
+    await s0.scoreOutcome(970, "pg-o2", 1);
+    assert.equal(await s0.gradedCount(970), 2);
+    assert.deepEqual((await s0.replayGoals(970, "Ship", Date.now(), 2)).map((o) => o.id), ["pg-o1", "pg-o2"], "goals that used the skill come first");
+    assert.equal(await s0.addProposal({ id: "pg-p1", uid: 970, kind: "skill", name: "Ship", reason: "r", proposed: "v3", source: "reflector" }), "ok");
+    await warm();
+    const claims = await Promise.all(stores.map((s) => s.nextQueuedProposal(970)));
+    assert.equal(claims.filter(Boolean).length, 1, "one instance claims a queued proposal");
+  });
+
   await t.test("a day-long rate limit survives the hourly purge", async () => {
     const s0 = stores[0] as Store;
     await s0.hit("pg-day", 86_400_000);

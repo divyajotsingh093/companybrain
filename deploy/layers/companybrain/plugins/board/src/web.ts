@@ -320,6 +320,11 @@ const CAPABILITIES: Array<{ title: string; text: string; tools: string[] }> = [
     tools: ["skill_read", "skill_learn"],
   },
   {
+    title: "Improve how work gets done",
+    text: "Agents report how each task went and propose better skills and processes. Every proposal is replayed against past goals before it is kept, and changes to what you wrote wait for you.",
+    tools: ["run_report", "propose_change", "outcomes_recent"],
+  },
+  {
     title: "Reach your other tools",
     text: "Call the other MCP servers you connected under Gateway, like your tracker or docs, with your tokens kept on the server and every call logged.",
     tools: ["gateway_servers", "gateway_tools", "gateway_call"],

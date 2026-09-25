@@ -20,6 +20,7 @@ async function autoMemory(store: Store, uid: number, name: string, memory: Omit<
     kind: "memory",
     ownerUid: uid,
     name,
+    author: "starter",
     body: (current) => (current === null || parseMemory(current).auto ? renderMemory({ ...memory, auto: true }) : null),
   });
 }
@@ -100,6 +101,7 @@ export async function seedHarnessSkill(store: Store, uid: number, opts: { login:
     kind: "skill",
     ownerUid: uid,
     name: HARNESS_SKILL,
+    author: "starter",
     body: (current) => {
       const skill: SkillParts = parseSkill(current ?? "");
       if (current === null) {
@@ -112,6 +114,7 @@ export async function seedHarnessSkill(store: Store, uid: number, opts: { login:
           "2. Call brain_search and skill_read for the task before assuming nothing is written down.",
           "3. Call board_read before changing a repository, and claim what you work on.",
           "4. Save what you learn with memory_save and skill_learn before you finish.",
+          "5. Report the outcome with run_report, and send any fix to a skill or process with propose_change.",
         ].join("\n");
       }
       const auto = (lines: string[]): string => [KEPT_UP_TO_DATE, ...lines].join("\n");

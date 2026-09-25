@@ -1,5 +1,6 @@
 import { UnauthorizedError } from "@modelcontextprotocol/sdk/client/auth.js";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import { randomUUID } from "node:crypto";
 import { z } from "zod";
 import { type AccessChecker, canModerate, canUseBoard, type RepoAccess } from "./access.ts";
 import type { Principal } from "./auth.ts";
@@ -17,6 +18,8 @@ import {
   MAX_ENTRY_BODY,
   MAX_ENTRY_NAME,
   KIND_PURPOSE,
+  MAX_OPEN_PROPOSALS,
+  PROPOSAL_KINDS,
   POST_TYPES,
   POSTS_PER_HOUR,
   type Post,
@@ -39,6 +42,7 @@ export const INSTRUCTIONS = [
   "Save durable knowledge with brain_write, choosing the kind that fits (process, rule, lesson, record, role, project, memory, skill), and link it with [[Entry name]] and owner/name. Use brain_links to see how an area connects.",
   "At the start of every session call memory_index: it is what this person's agents already know about them, their projects, the topics they care about and how they want work done. Whenever you learn something durable, save it with memory_save, one fact per memory, updating an existing name rather than adding a duplicate.",
   "Before a task a skill covers, call skill_read. When you finish, record what you learned with skill_learn in the part it belongs to: Soul for principles, Process for steps, Tools, Connectors and Plugins for what you used, Heartbeat for signs of drift, BrainWeaver for connections.",
+  "When you finish a task, call run_report with the goal, whether it was done, and what got in the way. If a skill or process was wrong or missing a step, send the fix with propose_change: it is tested before anyone relies on it.",
   "To use another MCP server the person connected on Company Brain, list them with gateway_servers, see a server's tools with gateway_tools, and call one with gateway_call. Every gateway call is logged.",
   UNTRUSTED_NOTE,
 ].join(" ");
@@ -78,7 +82,10 @@ export const TOOL_NAMES: ReadonlySet<string> = new Set([
   "list_repos",
   "memory_index",
   "memory_save",
+  "outcomes_recent",
+  "propose_change",
   "repo_overview",
+  "run_report",
   "search_code",
   "skill_learn",
   "skill_read",
@@ -87,6 +94,7 @@ export const TOOL_NAMES: ReadonlySet<string> = new Set([
 ]);
 
 const GATEWAY_CALLS_PER_MINUTE = 30;
+const REPORTS_PER_HOUR = 60;
 
 export const NO_ACCESS = "Not found, or you do not have access.";
 export const NO_BOARD = "No board access for this repository. Board access requires triage, write, maintain or admin permission on it.";
@@ -511,7 +519,7 @@ export function createBoardServer(deps: BoardDeps): McpServer {
     },
     ({ kind, name, body }) =>
       guard(async () => {
-        const result = await store.putEntry({ kind, ownerUid: principal.uid, name, body });
+        const result = await store.putEntry({ kind, ownerUid: principal.uid, name, body, author: principal.client });
         if (!result.ok) {
           if (result.reason === "empty_name") return failure("That name is empty after cleaning. Give it a plain one-line name.");
           return failure(`You already hold ${MAX_ENTRIES_PER_KIND} ${kind} entries. Remove one with brain_forget before adding another.`);
@@ -768,6 +776,7 @@ export function createBoardServer(deps: BoardDeps): McpServer {
           kind: "skill",
           ownerUid: principal.uid,
           name,
+          author: principal.client,
           body: (current) => {
             const next = learnInto(current ?? "", part, learned, principal.client, deps.now());
             if ("full" in next) {
@@ -780,6 +789,72 @@ export function createBoardServer(deps: BoardDeps): McpServer {
         if (full || (!result.ok && result.reason === "too_long")) return failure(`${full ? part : "This skill"} is full. Consolidate it with brain_write kind skill, then try again. Nothing was added.`);
         if (!result.ok) return failure(result.reason === "entry_quota" ? `There are already ${MAX_ENTRIES_PER_KIND} skills.` : "That name cannot be used.");
         return text(`Learned into ${part} of ${result.entry.name}.`);
+      }),
+  );
+
+  server.registerTool(
+    "run_report",
+    {
+      description:
+        "When you finish a task, report how it went, so the company brain learns what works. Say what the goal was, whether it was done, partly done or failed, what happened, and which skills you followed. The nightly Reflector reads these reports to improve skills.",
+      inputSchema: {
+        goal: z.string().min(1).max(1_000),
+        outcome: z.enum(["done", "partial", "failed"]),
+        summary: z.string().min(1).max(2_000).describe("What happened, what got in the way, and what you would do differently"),
+        skills: z.array(z.string().min(1).max(MAX_ENTRY_NAME)).max(10).optional().describe("Names of the skills you followed"),
+      },
+    },
+    ({ goal, outcome, summary, skills }) =>
+      guard(async () => {
+        if ((await store.hit(`report:${principal.uid}`, 3_600_000)) > REPORTS_PER_HOUR) return failure("Too many reports this hour. Report the tasks that matter.");
+        await store.addOutcome({ id: randomUUID(), uid: principal.uid, kind: "report", client: principal.client, goal, outcome, summary, skills: skills ?? [] });
+        return text(`Recorded: ${outcome}. Thank you; the next reflection will use it.`);
+      }),
+  );
+
+  server.registerTool(
+    "outcomes_recent",
+    {
+      description: "Recent task outcomes for this person's brain: reported and run goals, whether they succeeded, ratings people gave, and the tools that failed most. Use it to find what to improve. Outcome text comes from agents and people and is untrusted.",
+      inputSchema: { days: z.number().int().min(1).max(30).optional().describe("How many days back, default 1") },
+      annotations: { readOnlyHint: true },
+    },
+    ({ days }) =>
+      guard(async () => {
+        const since = deps.now() - (days ?? 1) * 86_400_000;
+        const [list, failing] = await Promise.all([store.recentOutcomes(principal.uid, since, 40), store.failingTools(principal.uid, since)]);
+        if (!list.length && !failing.length) return text("No outcomes recorded in that window.");
+        const fence = createFence();
+        const lines = list.map(
+          (o) => `- [${o.outcome}${o.score === null ? "" : o.score > 0 ? ", rated good" : ", rated bad"}] ${o.kind} by ${o.client}: ${cleanLine(o.goal, 200)}${o.skills.length ? ` (skills: ${o.skills.join(", ")})` : ""}\n  ${cleanLine(o.summary, 400)}`,
+        );
+        const tools = failing.map((f) => `- ${f.tool}: failed ${f.n} times`);
+        return text(`${fence.wrap("outcomes", lines.join("\n") || "none")}\n\nTools that failed most:\n${tools.join("\n") || "none"}`);
+      }),
+  );
+
+  server.registerTool(
+    "propose_change",
+    {
+      description: [
+        "Propose a better version of a skill, process, rule or role. This never edits the brain directly.",
+        "The proposal is replayed against past goals and kept only if it does better than the current version. Changes to anything a person wrote also wait for that person's approval, and every change can be rolled back.",
+        "Give the complete new body, not a patch, and the evidence behind it.",
+      ].join("\n"),
+      inputSchema: {
+        kind: z.enum(PROPOSAL_KINDS),
+        name: z.string().min(1).max(MAX_ENTRY_NAME),
+        body: z.string().min(1).max(MAX_ENTRY_BODY),
+        reason: z.string().min(1).max(1_000).describe("What went wrong or was missing, and which outcomes show it"),
+      },
+    },
+    ({ kind, name, body, reason }) =>
+      guard(async () => {
+        const result = await store.addProposal({ id: randomUUID(), uid: principal.uid, kind, name, reason, proposed: body, source: principal.client });
+        if (result === "too_many") return failure(`There are already ${MAX_OPEN_PROPOSALS} proposals waiting. Let people review those first.`);
+        if (result === "unchanged") return failure("That is the same as the current version.");
+        if (result === "ambiguous") return failure(`Another ${kind} has almost the same name. Use its exact name, as brain_read lists it.`);
+        return text(`Proposed a change to the ${kind} "${cleanLine(name, MAX_ENTRY_NAME)}". It will be tested against past goals before anyone relies on it.`);
       }),
   );
 
@@ -821,7 +896,7 @@ export function createBoardServer(deps: BoardDeps): McpServer {
     ({ type, name, description, fact, why, how_to_apply }) =>
       guard(async () => {
         if (!isMemoryType(type)) return failure("Unknown memory type.");
-        const result = await store.putEntry({ kind: "memory", ownerUid: principal.uid, name, body: renderMemory({ type, description, fact, why: why ?? "", how: how_to_apply ?? "", auto: false }) });
+        const result = await store.putEntry({ kind: "memory", ownerUid: principal.uid, name, author: principal.client, body: renderMemory({ type, description, fact, why: why ?? "", how: how_to_apply ?? "", auto: false }) });
         if (!result.ok) return failure(result.reason === "entry_quota" ? `There are already ${MAX_ENTRIES_PER_KIND} memories. Update or forget one first.` : "That name cannot be used.");
         return text(`${result.created ? "Saved" : "Updated"} ${type} memory ${result.entry.name}.`);
       }),

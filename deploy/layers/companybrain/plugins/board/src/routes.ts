@@ -23,12 +23,13 @@ import { createBoardServer, describeError, TOOL_NAMES } from "./mcp.ts";
 import { AUTHORIZE_PATH, CODE_TTL_MS, formActionFor, MAX_NEXT_LENGTH, issueCode, metadata, NEXT_TTL_MS, readClient, redeemCode, redirectAllowed, registerClient, resourceAllowed, validChallenge, withParams } from "./oauth.ts";
 import { forgetReference, quietly, seedHarnessSkill, seedPerson, seedProject, seedReference } from "./seed.ts";
 import { AGREEMENT, agentCards, agentsFor, HANDBOOK, packsOf, readWelcome, seedStarterKit, type WelcomeInput } from "./starter.ts";
+import { GATE_MIN_GRADED, REFLECT_EVERY_MS, REFLECT_GOAL, REFLECTOR, reflectorRefusal, runGate } from "./improve.ts";
 import { type AgentProfile, CREATE_WRITES, LIBRARIAN, LIBRARIAN_GOAL, MAX_STEPS, profilesFor, RUN_DEADLINE_MS, runAgent } from "./runner.ts";
 import { isMemoryType, MEMORY_PURPOSE, parseMemory, renderMemory } from "./memory.ts";
 import { learnInto, PART_PURPOSE, parseSkill, pulse, renderSkill, SKILL_PARTS, STALE_AFTER_MS } from "./skills.ts";
 import { candidates, rank, type Signals } from "./suggest.ts";
 import { cleanLine, cleanText } from "./untrusted.ts";
-import { ACTIVE_AGENT_TOKENS_PER_USER, ENTRY_KINDS, type EntryKind, type GatewayOAuthRows, type RunStep, KIND_PURPOSE, MAX_DOC_BODY, MAX_ENTRY_BODY, MAX_ENTRY_NAME, MAX_UPLOAD_NAME, type Store } from "./store.ts";
+import { ACTIVE_AGENT_TOKENS_PER_USER, ENTRY_KINDS, type EntryKind, type GatewayOAuthRows, type Proposal, type RunStep, KIND_PURPOSE, MAX_DOC_BODY, MAX_ENTRY_BODY, MAX_ENTRY_NAME, MAX_UPLOAD_NAME, type Store } from "./store.ts";
 import { hashToken, isAgentClient, seal, unseal } from "./token.ts";
 import { type ErrorCode, isErrorCode, renderBoard, renderConnected, renderDenied, renderHome, renderConsent, renderMessage, renderTokenCreated } from "./web.ts";
 import { renderWelcome, WELCOME_CSP } from "./welcome.ts";
@@ -51,6 +52,8 @@ const RUNS_PER_DAY = 30;
 const AUTO_BUILD_EVERY_MS = 20 * 3_600_000;
 const AUTO_BUILDS_PER_CRON = 10;
 const MAX_GOAL = 2_000;
+const TEST_COST_IN_RUNS = 3;
+const GATES_PER_CRON = 3;
 
 const SESSION_COOKIE = "cb_session";
 const STATE_COOKIE = "cb_state";
@@ -498,6 +501,7 @@ export function createApp(deps: AppDeps): Hono {
         kind: "skill",
         ownerUid: principal.uid,
         name: skill,
+        author: "web",
         body: (current) => {
           const next = learnInto(current ?? "", part, note, "company-brain", now());
           return "full" in next ? null : next.body;
@@ -923,7 +927,13 @@ export function createApp(deps: AppDeps): Hono {
     try {
       const answer = await answerQuestion({ question: payload.question, found, model, history, signal: c.req.raw.signal });
       await store.markAsked(principal.uid).catch(() => undefined);
-      return c.json({ ...answer, related: [...related.values()].slice(0, 8) });
+      const id = randomBytes(12).toString("base64url");
+      const skills = found.filter((f) => f.kind === "skill").map((f) => f.title);
+      const outcomeId = await store
+        .addOutcome({ id, uid: principal.uid, kind: "ask", client: "web", goal: payload.question, outcome: found.length ? "done" : "failed", summary: answer.answer, skills })
+        .then(() => id)
+        .catch(() => undefined);
+      return c.json({ ...answer, ...(outcomeId ? { outcomeId } : {}), related: [...related.values()].slice(0, 8) });
     } catch {
       return c.json({ error: "model_failed" }, 502);
     }
@@ -987,7 +997,7 @@ export function createApp(deps: AppDeps): Hono {
     }
     if (typeof payload.name !== "string" || body === null) return c.json({ error: "bad_fields" }, 400);
     if (payload.name.length > MAX_ENTRY_NAME || (typeof body === "string" && body.length > MAX_ENTRY_BODY)) return c.json({ error: "too_long" }, 400);
-    const result = await store.putEntry({ kind, ownerUid: principal.uid, name: payload.name, body });
+    const result = await store.putEntry({ kind, ownerUid: principal.uid, name: payload.name, body, author: "web" });
     if (!result.ok) return c.json({ error: result.reason }, result.reason === "entry_quota" ? 429 : 400);
     return c.json({ entry: result.entry, created: result.created });
   });
@@ -998,7 +1008,7 @@ export function createApp(deps: AppDeps): Hono {
     if (!sameOrigin(c)) return c.json({ error: "blocked" }, 403);
     const kind = ENTRY_KINDS.find((k) => k === c.req.query("kind"));
     if (!kind) return c.json({ error: "bad_kind" }, 400);
-    if (!(await store.deleteEntry(kind, principal.uid, c.req.query("name") ?? ""))) return c.json({ error: "not_found" }, 404);
+    if (!(await store.deleteEntry(kind, principal.uid, c.req.query("name") ?? "", { keepHistory: false }))) return c.json({ error: "not_found" }, 404);
     return c.json({ ok: true });
   });
 
@@ -1138,7 +1148,8 @@ export function createApp(deps: AppDeps): Hono {
   };
 
   const executeRun = async (uid: number, login: string, id: string, profile: AgentProfile, goal: string, allowChanges: boolean): Promise<void> => {
-    const principal: Principal = { tokenId: `run:${id}`, uid, login, kind: "agent", client: "runner" };
+    const principal: Principal = { tokenId: `run:${id}`, uid, login, kind: "agent", client: profile.reflects ? "reflector" : "runner" };
+    const skillsRead = new Set<string>();
     const record = async (step: Omit<RunStep, "at">) => store.addRunStep(id, { ...step, at: now() });
     let client: Client | null = null;
     let server: ReturnType<typeof createBoardServer> | null = null;
@@ -1159,9 +1170,17 @@ export function createApp(deps: AppDeps): Hono {
         record,
         onCall: async (tool, args, ok) => {
           const subject = auditSubject(tool, args);
-          await store.audit({ uid, tokenId: principal.tokenId, client: "runner", tool, subject: subject === null ? null : cleanLine(subject, 201), ok }).catch(() => undefined);
+          if (tool === "skill_read" && typeof args.name === "string") skillsRead.add(args.name);
+          await store.audit({ uid, tokenId: principal.tokenId, client: principal.client, tool, subject: subject === null ? null : cleanLine(subject, 201), ok }).catch(() => undefined);
         },
         gate: async (tool, args, readOnly) => {
+          if (profile.reflects) {
+            const refused = reflectorRefusal(tool, args, readOnly);
+            if (refused || tool !== "brain_write") return refused;
+            const wanted = cleanLine(String(args.name ?? ""), MAX_ENTRY_NAME).toLowerCase();
+            const taken = (await store.listEntries("lesson", uid)).some((l) => l.name.toLowerCase() === wanted);
+            return taken ? "A lesson with that name already exists. Write a new lesson with its own name." : null;
+          }
           if (readOnly) return null;
           if (allowChanges && !profile.builds) return null;
           if (!CREATE_WRITES.has(tool)) return profile.builds ? "The librarian only reads sources and adds new entries." : "Changes are off for this run, so this tool is not allowed. The person can allow changes when starting a run.";
@@ -1174,6 +1193,9 @@ export function createApp(deps: AppDeps): Hono {
         },
       });
       await store.finishRun(id, outcome.status, outcome.answer);
+      if (!profile.reflects) {
+        await store.addOutcome({ id, uid, kind: "run", client: profile.id, goal, outcome: outcome.status, summary: outcome.answer, skills: [...skillsRead] }).catch(() => undefined);
+      }
     } catch (err) {
       const message =
         err instanceof Error && err.message === "model_unconfigured"
@@ -1186,6 +1208,9 @@ export function createApp(deps: AppDeps): Hono {
       console.error(`agent run failed: ${err instanceof Error ? err.name : typeof err}`);
       await record({ kind: "error", text: message }).catch(() => undefined);
       await store.finishRun(id, "failed", message).catch(() => undefined);
+      if (!profile.reflects) {
+        await store.addOutcome({ id, uid, kind: "run", client: profile.id, goal, outcome: "failed", summary: message, skills: [...skillsRead] }).catch(() => undefined);
+      }
     } finally {
       await client?.close().catch(() => undefined);
       await server?.close().catch(() => undefined);
@@ -1193,6 +1218,232 @@ export function createApp(deps: AppDeps): Hono {
   };
 
   const defer = deps.defer ?? waitUntil;
+
+  const openReplayClient = (uid: number, login: string) => async () => {
+    const principal: Principal = { tokenId: `replay:${randomBytes(6).toString("hex")}`, uid, login, kind: "agent", client: "replay" };
+    const server = createBoardServer({ principal, access, store, publicUrl: config.publicUrl, now, github: async () => githubFor(await auth.githubToken(uid)), upstream: upstreamFor(uid) });
+    const client = new Client({ name: "companybrain-replay", version: "1.0.0" });
+    const [clientSide, serverSide] = InMemoryTransport.createLinkedPair();
+    await server.connect(serverSide);
+    await client.connect(clientSide);
+    return {
+      client,
+      close: async () => {
+        await client.close().catch(() => undefined);
+        await server.close().catch(() => undefined);
+      },
+    };
+  };
+
+  const applyProposal = async (uid: number, proposal: Proposal, author: string): Promise<Proposal | undefined> => {
+    const result = await store.putEntry({
+      kind: proposal.kind,
+      ownerUid: uid,
+      name: proposal.name,
+      author,
+      cause: `proposal:${proposal.id}`,
+      body: (current) => (current === proposal.current ? proposal.proposed : null),
+    });
+    if (!result.ok) {
+      if (result.reason !== "refused") return undefined;
+      await store.refreshProposalBase(uid, proposal.id, (await store.getEntry(proposal.kind, uid, proposal.name))?.body ?? null);
+      return store.moveProposal(uid, proposal.id, ["waiting", "testing", "failed_gate", "stale"], { status: "stale" });
+    }
+    return store.moveProposal(uid, proposal.id, ["waiting", "testing", "failed_gate", "stale"], { status: "applied", appliedVersion: result.versionId, appliedCreated: result.created, decided: true });
+  };
+
+  const testProposal = async (uid: number, login: string, proposal: Proposal): Promise<void> => {
+    try {
+      if (!model) throw new Error("model_unconfigured");
+      const current = (await store.getEntry(proposal.kind, uid, proposal.name))?.body ?? null;
+      if (current !== proposal.current) {
+        await store.refreshProposalBase(uid, proposal.id, current);
+        await store.moveProposal(uid, proposal.id, ["testing"], { status: "stale" });
+        return;
+      }
+      const gate = await runGate({ model, store, uid, proposal, open: openReplayClient(uid, login), deadline: AbortSignal.timeout(RUN_DEADLINE_MS) });
+      if (gate.verdict === "fail") {
+        await store.moveProposal(uid, proposal.id, ["testing"], { status: "failed_gate", gate });
+        return;
+      }
+      const needsApproval =
+        gate.verdict !== "pass" || proposal.kind !== "skill" || !(await store.improveSettings(uid)).improve || (await store.humanTouched(uid, proposal.kind, proposal.name));
+      const tested = await store.moveProposal(uid, proposal.id, ["testing"], { status: needsApproval ? "waiting" : "testing", gate, needsApproval });
+      if (tested && !needsApproval) await applyProposal(uid, tested, proposal.source);
+    } catch (err) {
+      console.error(`proposal test failed: ${err instanceof Error ? err.name : typeof err}`);
+      await store.moveProposal(uid, proposal.id, ["testing"], { status: "queued" }).catch(() => undefined);
+    }
+  };
+
+  const revertProposal = async (uid: number, proposal: Proposal): Promise<Proposal | "changed" | undefined> => {
+    const cause = `revert:${proposal.id}`;
+    const live = (await store.getEntry(proposal.kind, uid, proposal.name))?.body ?? null;
+    if (live !== proposal.proposed) return "changed";
+    if (proposal.appliedCreated) {
+      await store.deleteEntry(proposal.kind, uid, proposal.name);
+    } else if (proposal.appliedVersion !== null) {
+      const version = await store.entryVersion(uid, proposal.appliedVersion);
+      if (!version) return undefined;
+      const restored = await store.putEntry({ kind: proposal.kind, ownerUid: uid, name: proposal.name, author: version.author, cause, body: version.body });
+      if (!restored.ok) return undefined;
+    }
+    return store.moveProposal(uid, proposal.id, ["applied"], { status: "reverted", decided: true });
+  };
+
+  const publicProposal = (p: Proposal) => ({
+    id: p.id,
+    kind: p.kind,
+    name: p.name,
+    reason: p.reason,
+    current: p.current,
+    proposed: p.proposed,
+    status: p.status,
+    gate: p.gate,
+    needsApproval: p.needsApproval,
+    source: p.source,
+    createdAt: p.createdAt,
+    decidedAt: p.decidedAt,
+  });
+
+  const mondayOf = (at: number): string => {
+    const d = new Date(at);
+    const back = (d.getUTCDay() + 6) % 7;
+    return new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate() - back)).toISOString().slice(0, 10);
+  };
+
+  app.get("/api/app/learning", async (c) => {
+    const principal = await session(c);
+    if (!principal) return c.json({ error: "sign_in" }, 401);
+    const uid = principal.uid;
+    await store.settleStaleTesting(uid);
+    const since = now() - 8 * 7 * 86_400_000;
+    const [settings, graded, points, lessons, proposals, reflections] = await Promise.all([
+      store.improveSettings(uid),
+      store.gradedCount(uid),
+      store.outcomeWeeks(uid, since),
+      store.listEntries("lesson", uid),
+      store.listProposals(uid, 30),
+      store.listRuns(uid, 5, REFLECTOR.id),
+    ]);
+    const weeks = Array.from({ length: 8 }, (_, i) => ({ week: mondayOf(now() - (7 - i) * 7 * 86_400_000), done: 0, failed: 0, up: 0, down: 0 }));
+    for (const p of points) {
+      const w = weeks.find((x) => x.week === mondayOf(p.at));
+      if (!w) continue;
+      if (p.outcome === "done") w.done++;
+      else if (p.outcome === "failed" || p.outcome === "stopped") w.failed++;
+      if (p.score === 1) w.up++;
+      if (p.score === -1) w.down++;
+    }
+    return c.json({
+      enabled: settings.improve,
+      graded,
+      gateMin: GATE_MIN_GRADED,
+      weeks,
+      lessons: lessons.filter((l) => l.author === "reflector").slice(0, 10).map((l) => ({ name: l.name, body: l.body, createdAt: l.createdAt })),
+      proposals: proposals.map(publicProposal),
+      reflections: reflections.map((r) => ({ id: r.id, status: r.status, answer: r.answer, createdAt: r.createdAt })),
+      canRun: model !== null,
+      now: now(),
+    });
+  });
+
+  app.post("/api/app/learning", jsonLimit, async (c) => {
+    const principal = await session(c);
+    if (!principal) return c.json({ error: "sign_in" }, 401);
+    if (!sameOrigin(c)) return c.json({ error: "blocked" }, 403);
+    const payload = (await c.req.json().catch(() => null)) as { enabled?: unknown; reflectNow?: unknown } | null;
+    if (typeof payload?.enabled === "boolean") await store.setImprove(principal.uid, payload.enabled);
+    const enabled = (await store.improveSettings(principal.uid)).improve;
+    if (payload?.reflectNow !== true) return c.json({ enabled });
+    if (!model) return c.json({ error: "no_model" }, 503);
+    if (await store.hasRunningRun(principal.uid)) return c.json({ error: "busy" }, 409);
+    if ((await store.hit(`runs:${principal.uid}`, 86_400_000)) > RUNS_PER_DAY) return c.json({ error: "rate_limited" }, 429);
+    const runId = await startRun(principal.uid, principal.login, REFLECTOR, REFLECT_GOAL, false);
+    return runId ? c.json({ enabled, runId }, 202) : c.json({ error: "busy" }, 409);
+  });
+
+  app.post("/api/app/proposals/:id", jsonLimit, async (c) => {
+    const principal = await session(c);
+    if (!principal) return c.json({ error: "sign_in" }, 401);
+    if (!sameOrigin(c)) return c.json({ error: "blocked" }, 403);
+    const uid = principal.uid;
+    const proposal = await store.getProposal(uid, c.req.param("id"));
+    if (!proposal) return c.json({ error: "not_found" }, 404);
+    const action = ((await c.req.json().catch(() => null)) as { action?: unknown } | null)?.action;
+    let next: Proposal | undefined;
+    if (action === "accept" && proposal.status === "waiting") {
+      next = await applyProposal(uid, proposal, "web");
+      if (next?.status === "stale") return c.json({ error: "changed_since", proposal: publicProposal(next) }, 409);
+    } else if (action === "accept" && ["failed_gate", "stale"].includes(proposal.status)) {
+      const current = (await store.getEntry(proposal.kind, uid, proposal.name))?.body ?? null;
+      await store.refreshProposalBase(uid, proposal.id, current);
+      next = await applyProposal(uid, { ...proposal, current }, "web");
+    } else if (action === "reject" && ["waiting", "failed_gate", "stale", "queued"].includes(proposal.status)) {
+      next = await store.moveProposal(uid, proposal.id, [proposal.status], { status: "rejected", decided: true });
+    } else if (action === "revert" && proposal.status === "applied") {
+      const reverted = await revertProposal(uid, proposal);
+      if (reverted === "changed") return c.json({ error: "changed_since" }, 409);
+      next = reverted;
+    } else if (action === "test" && ["queued", "failed_gate", "stale"].includes(proposal.status)) {
+      if (!model) return c.json({ error: "no_model" }, 503);
+      let used = 0;
+      for (let i = 0; i < TEST_COST_IN_RUNS; i++) used = await store.hit(`runs:${uid}`, 86_400_000);
+      if (used > RUNS_PER_DAY) return c.json({ error: "rate_limited" }, 429);
+      if (proposal.status === "stale") await store.refreshProposalBase(uid, proposal.id, (await store.getEntry(proposal.kind, uid, proposal.name))?.body ?? null);
+      next = await store.moveProposal(uid, proposal.id, [proposal.status], { status: "testing" });
+      if (next) {
+        const claimed = next;
+        defer(testProposal(uid, principal.login, claimed));
+      }
+    } else {
+      return c.json({ error: "wrong_state" }, 409);
+    }
+    return next ? c.json({ proposal: publicProposal(next) }) : c.json({ error: "wrong_state" }, 409);
+  });
+
+  app.post("/api/app/feedback", jsonLimit, async (c) => {
+    const principal = await session(c);
+    if (!principal) return c.json({ error: "sign_in" }, 401);
+    if (!sameOrigin(c)) return c.json({ error: "blocked" }, 403);
+    const payload = (await c.req.json().catch(() => null)) as { id?: unknown; score?: unknown } | null;
+    if (typeof payload?.id !== "string" || (payload.score !== 1 && payload.score !== -1)) return c.json({ error: "bad_fields" }, 400);
+    return (await store.scoreOutcome(principal.uid, payload.id, payload.score)) ? c.json({ ok: true }) : c.json({ error: "not_found" }, 404);
+  });
+
+  app.get("/cron/reflect", async (c) => {
+    if (!cronAuthorized(c)) return c.text("Not found.", 404);
+    if (!model) return c.json({ reflected: 0, reason: "no_model" });
+    const uids = await store.claimReflections(now() - REFLECT_EVERY_MS, AUTO_BUILDS_PER_CRON);
+    const done = await Promise.allSettled(
+      uids.map(async (uid) => {
+        const cred = await store.credential(uid);
+        if (!cred || !(await store.profile(uid))) return false;
+        const id = randomBytes(12).toString("base64url");
+        if (!(await store.createRun({ id, uid, agent: REFLECTOR.id, goal: REFLECT_GOAL, allowActions: false }))) return false;
+        await executeRun(uid, cred.login, id, REFLECTOR, REFLECT_GOAL, false);
+        return true;
+      }),
+    );
+    return c.json({ reflected: done.filter((d) => d.status === "fulfilled" && d.value).length });
+  });
+
+  app.get("/cron/gate", async (c) => {
+    if (!cronAuthorized(c)) return c.text("Not found.", 404);
+    if (!model) return c.json({ tested: 0, reason: "no_model" });
+    await store.settleStaleTesting();
+    const uids = await store.usersWithQueuedProposals(GATES_PER_CRON);
+    const done = await Promise.allSettled(
+      uids.map(async (uid) => {
+        const cred = await store.credential(uid);
+        const proposal = cred ? await store.nextQueuedProposal(uid) : undefined;
+        if (!cred || !proposal) return false;
+        await testProposal(uid, cred.login, proposal);
+        return true;
+      }),
+    );
+    return c.json({ tested: done.filter((d) => d.status === "fulfilled" && d.value).length });
+  });
 
   const startRun = async (uid: number, login: string, profile: AgentProfile, goal: string, allowChanges: boolean): Promise<string | null> => {
     const id = randomBytes(12).toString("base64url");

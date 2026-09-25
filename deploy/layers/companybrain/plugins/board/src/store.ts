@@ -18,6 +18,10 @@ export const MAX_POSTS_PER_REPO = 5_000;
 const RETAIN_POSTS_MS = 180 * 24 * 3_600_000;
 const RETAIN_AUDIT_MS = 30 * 24 * 3_600_000;
 const RETAIN_RUNS_MS = 7 * 24 * 3_600_000;
+const RETAIN_OUTCOMES_MS = 180 * 24 * 3_600_000;
+const MAX_VERSIONS_PER_ENTRY = 20;
+const MAX_OUTCOMES_PER_USER = 5_000;
+const RETAIN_VERSIONS_MS = 90 * 24 * 3_600_000;
 const RETAIN_SUGGESTIONS_MS = 180 * 24 * 3_600_000;
 const EXPIRING_SOON_MS = 30 * 60_000;
 export const MAX_AUDIT_PER_USER = 2_000;
@@ -155,6 +159,7 @@ export interface Entry {
   body: string;
   createdAt: number;
   updatedAt: number;
+  author: string | null;
 }
 
 interface ProfileRow {
@@ -182,6 +187,7 @@ interface EntryRow {
   body: string;
   created_at: number;
   updated_at: number;
+  author: string | null;
 }
 
 function toEntry(r: EntryRow): Entry {
@@ -193,6 +199,7 @@ function toEntry(r: EntryRow): Entry {
     body: r.body,
     createdAt: r.created_at,
     updatedAt: r.updated_at,
+    author: r.author ?? null,
   };
 }
 
@@ -258,10 +265,61 @@ export interface AgentRun {
   calls?: number;
 }
 
+export type OutcomeKind = "run" | "report" | "ask";
+export type OutcomeResult = "done" | "partial" | "failed" | "stopped";
+
+export interface Outcome {
+  id: string;
+  uid: number;
+  kind: OutcomeKind;
+  client: string;
+  goal: string;
+  outcome: OutcomeResult;
+  summary: string;
+  skills: string[];
+  score: number | null;
+  at: number;
+}
+
+export const PROPOSAL_KINDS = ["skill", "process", "rule", "role"] as const;
+export type ProposalKind = (typeof PROPOSAL_KINDS)[number];
+export type ProposalStatus = "queued" | "testing" | "waiting" | "applied" | "rejected" | "failed_gate" | "reverted" | "stale";
+
+export interface GateResult {
+  goals: number;
+  candidateWins: number;
+  baselineWins: number;
+  ties: number;
+  verdict: "pass" | "fail" | "skipped";
+  note: string;
+}
+
+export interface Proposal {
+  id: string;
+  uid: number;
+  kind: ProposalKind;
+  name: string;
+  reason: string;
+  current: string | null;
+  proposed: string;
+  status: ProposalStatus;
+  gate: GateResult | null;
+  needsApproval: boolean;
+  source: string;
+  appliedVersion: number | null;
+  appliedCreated: boolean;
+  createdAt: number;
+  decidedAt: number | null;
+}
+
+export const MAX_OPEN_PROPOSALS = 20;
+export const MAX_OPEN_PROPOSALS_PER_SOURCE = 10;
+export const HUMAN_AUTHORS: ReadonlySet<string> = new Set(["web", "starter"]);
+
 export const RUN_STALE_MS = 6 * 60_000;
 
 export type PutEntryResult =
-  | { ok: true; entry: Entry; created: boolean }
+  | { ok: true; entry: Entry; created: boolean; versionId: number | null }
   | { ok: false; reason: "entry_quota" | "empty_name" | "refused" | "too_long" };
 
 export interface NewPost {
@@ -642,6 +700,58 @@ const SCHEMA = `
     auto_build BOOLEAN NOT NULL,
     built_at BIGINT
   );
+  ALTER TABLE brain_settings ADD COLUMN IF NOT EXISTS improve BOOLEAN NOT NULL DEFAULT false;
+  ALTER TABLE brain_settings ADD COLUMN IF NOT EXISTS reflected_at BIGINT;
+  ALTER TABLE entries ADD COLUMN IF NOT EXISTS author TEXT;
+  ALTER TABLE entries ADD COLUMN IF NOT EXISTS human_edited BOOLEAN NOT NULL DEFAULT false;
+  UPDATE entries SET human_edited = true WHERE NOT human_edited AND (author IS NULL OR author IN ('web', 'starter'));
+  CREATE INDEX IF NOT EXISTS entries_human ON entries (owner_uid, kind) WHERE human_edited;
+  CREATE TABLE IF NOT EXISTS entry_versions (
+    id BIGSERIAL PRIMARY KEY,
+    owner_uid BIGINT NOT NULL,
+    kind TEXT NOT NULL,
+    name TEXT NOT NULL,
+    body TEXT NOT NULL,
+    author TEXT,
+    cause TEXT,
+    at BIGINT NOT NULL
+  );
+  CREATE INDEX IF NOT EXISTS entry_versions_entry ON entry_versions (owner_uid, kind, name, id);
+  CREATE TABLE IF NOT EXISTS outcomes (
+    id TEXT PRIMARY KEY,
+    uid BIGINT NOT NULL,
+    kind TEXT NOT NULL,
+    client TEXT NOT NULL,
+    goal TEXT NOT NULL,
+    outcome TEXT NOT NULL,
+    summary TEXT NOT NULL,
+    skills JSONB NOT NULL DEFAULT '[]'::jsonb,
+    score SMALLINT,
+    at BIGINT NOT NULL
+  );
+  CREATE INDEX IF NOT EXISTS outcomes_uid ON outcomes (uid, at);
+  CREATE TABLE IF NOT EXISTS proposals (
+    id TEXT PRIMARY KEY,
+    uid BIGINT NOT NULL,
+    kind TEXT NOT NULL,
+    name TEXT NOT NULL,
+    reason TEXT NOT NULL,
+    base_body TEXT,
+    proposed TEXT NOT NULL,
+    status TEXT NOT NULL,
+    gate JSONB,
+    needs_approval BOOLEAN NOT NULL DEFAULT true,
+    source TEXT NOT NULL,
+    applied_version BIGINT,
+    created_at BIGINT NOT NULL,
+    decided_at BIGINT,
+    tested_at BIGINT,
+    applied_created BOOLEAN NOT NULL DEFAULT false
+  );
+  CREATE INDEX IF NOT EXISTS proposals_uid ON proposals (uid, created_at);
+  ALTER TABLE proposals ADD COLUMN IF NOT EXISTS tested_at BIGINT;
+  ALTER TABLE proposals ADD COLUMN IF NOT EXISTS applied_created BOOLEAN NOT NULL DEFAULT false;
+  CREATE INDEX IF NOT EXISTS proposals_applied ON proposals (uid) WHERE applied_created;
 `;
 
 const WIKI_LINK = /\[\[([^\]\n]{1,120})\]\]/g;
@@ -680,7 +790,7 @@ export function extractLinks(body: string): Array<{ toKind: string; toName: stri
   return [...out.values()];
 }
 
-const ENTRY_COLS = "id, kind, owner_uid, name, body, created_at, updated_at";
+const ENTRY_COLS = "id, kind, owner_uid, name, body, created_at, updated_at, author";
 
 const recordEvent = (q: Query, repoId: number, at: number, kind: EventKind, post: { id: string; type: PostType; title: string }, actor: Actor) =>
   q.query(`INSERT INTO board_events (repo_id, at, kind, post_id, post_type, title, actor_uid, actor_login, client) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`, [
@@ -707,7 +817,7 @@ export function openStore(db: Database, now: () => number = Date.now) {
       .transaction(async (tx) => {
         await tx.query(`SET LOCAL lock_timeout = '10s'`);
         const current = async () =>
-          (await tx.query<{ ok: boolean }>(`SELECT to_regclass('rate_limits') IS NOT NULL AND to_regclass('posts_open') IS NOT NULL AND to_regclass('audit_log_at') IS NOT NULL AND to_regclass('board_events_repo_id') IS NOT NULL AND to_regclass('entries_listing') IS NOT NULL AND to_regclass('posts_open_decisions') IS NOT NULL AND to_regclass('documents_search_v2') IS NOT NULL AND to_regclass('entries_search') IS NOT NULL AND to_regclass('links_incoming') IS NOT NULL AND to_regclass('work_updates_task') IS NOT NULL AND to_regclass('gateway_servers') IS NOT NULL AND to_regclass('suggestion_events_uid') IS NOT NULL AND to_regclass('profiles') IS NOT NULL AND to_regclass('gateway_oauth_state') IS NOT NULL AND to_regclass('agent_runs_uid') IS NOT NULL AND to_regclass('brain_settings') IS NOT NULL AND to_regclass('agent_runs_one_running') IS NOT NULL AS ok`)).rows[0]?.ok;
+          (await tx.query<{ ok: boolean }>(`SELECT to_regclass('rate_limits') IS NOT NULL AND to_regclass('posts_open') IS NOT NULL AND to_regclass('audit_log_at') IS NOT NULL AND to_regclass('board_events_repo_id') IS NOT NULL AND to_regclass('entries_listing') IS NOT NULL AND to_regclass('posts_open_decisions') IS NOT NULL AND to_regclass('documents_search_v2') IS NOT NULL AND to_regclass('entries_search') IS NOT NULL AND to_regclass('links_incoming') IS NOT NULL AND to_regclass('work_updates_task') IS NOT NULL AND to_regclass('gateway_servers') IS NOT NULL AND to_regclass('suggestion_events_uid') IS NOT NULL AND to_regclass('profiles') IS NOT NULL AND to_regclass('gateway_oauth_state') IS NOT NULL AND to_regclass('agent_runs_uid') IS NOT NULL AND to_regclass('brain_settings') IS NOT NULL AND to_regclass('agent_runs_one_running') IS NOT NULL AND to_regclass('entry_versions_entry') IS NOT NULL AND to_regclass('outcomes_uid') IS NOT NULL AND to_regclass('proposals_uid') IS NOT NULL AND to_regclass('entries_human') IS NOT NULL AND to_regclass('proposals_applied') IS NOT NULL AS ok`)).rows[0]?.ok;
         if (await current()) return;
         await lock(tx, "companybrain-board:schema");
         if (await current()) return;
@@ -1066,6 +1176,9 @@ export function openStore(db: Database, now: () => number = Date.now) {
       await tx.query(`DELETE FROM gateway_oauth WHERE owner_uid = $1`, [uid]);
       await tx.query(`DELETE FROM agent_runs WHERE uid = $1`, [uid]);
       await tx.query(`DELETE FROM brain_settings WHERE uid = $1`, [uid]);
+      await tx.query(`DELETE FROM outcomes WHERE uid = $1`, [uid]);
+      await tx.query(`DELETE FROM proposals WHERE uid = $1`, [uid]);
+      await tx.query(`DELETE FROM entry_versions WHERE owner_uid = $1`, [uid]);
       await tx.query(`DELETE FROM suggestion_events WHERE uid = $1`, [uid]);
       await tx.query(`DELETE FROM profiles WHERE uid = $1`, [uid]);
     });
@@ -1085,7 +1198,7 @@ export function openStore(db: Database, now: () => number = Date.now) {
     return row?.hits ?? 1;
   }
 
-  async function putEntry(input: { kind: EntryKind; ownerUid: number; name: string; body: string | ((current: string | null) => string | null) }): Promise<PutEntryResult> {
+  async function putEntry(input: { kind: EntryKind; ownerUid: number; name: string; body: string | ((current: string | null) => string | null); author?: string | null; cause?: string }): Promise<PutEntryResult> {
     const name = cleanLine(input.name, MAX_ENTRY_NAME);
     if (!name) return { ok: false, reason: "empty_name" } as const;
     return transaction(async (tx) => {
@@ -1097,19 +1210,37 @@ export function openStore(db: Database, now: () => number = Date.now) {
       if (next.length > MAX_ENTRY_BODY) return { ok: false, reason: "too_long" } as const;
       const body = cleanText(next, MAX_ENTRY_BODY);
       if (existing) {
-        const updated = await tx.query<EntryRow>(`UPDATE entries SET body = $1, updated_at = $2 WHERE id = $3 RETURNING ${ENTRY_COLS}`, [body, at, existing.id]);
+        const author = input.author === undefined ? (existing.author ?? null) : input.author;
+        const version = existing.body === body ? null : await saveVersion(tx, existing, input.cause ?? null, at);
+        const human = author === null || HUMAN_AUTHORS.has(author) ? "true" : "false";
+        const updated = await tx.query<EntryRow>(`UPDATE entries SET body = $1, updated_at = $2, author = $4, human_edited = human_edited OR $5 OR author IS NULL OR author IN ('web', 'starter') WHERE id = $3 RETURNING ${ENTRY_COLS}`, [body, at, existing.id, author, human]);
         await rewriteLinks(tx, input.ownerUid, input.kind, name, body);
-        return { ok: true, entry: toEntry(updated.rows[0] as EntryRow), created: false } as const;
+        return { ok: true, entry: toEntry(updated.rows[0] as EntryRow), created: false, versionId: version } as const;
       }
       const held = await count(tx, `SELECT COUNT(*) AS n FROM entries WHERE kind = $1 AND owner_uid = $2`, [input.kind, input.ownerUid]);
       if (held >= MAX_ENTRIES_PER_KIND) return { ok: false, reason: "entry_quota" } as const;
       const inserted = await tx.query<EntryRow>(
-        `INSERT INTO entries (id, kind, owner_uid, name, body, created_at, updated_at) VALUES ($1, $2, $3, $4, $5, $6, $6) RETURNING ${ENTRY_COLS}`,
-        [randomUUID(), input.kind, input.ownerUid, name, body, at],
+        `INSERT INTO entries (id, kind, owner_uid, name, body, created_at, updated_at, author, human_edited) VALUES ($1, $2, $3, $4, $5, $6, $6, $7, $8) RETURNING ${ENTRY_COLS}`,
+        [randomUUID(), input.kind, input.ownerUid, name, body, at, input.author ?? null, input.author == null || HUMAN_AUTHORS.has(input.author) ? "true" : "false"],
       );
       await rewriteLinks(tx, input.ownerUid, input.kind, name, body);
-      return { ok: true, entry: toEntry(inserted.rows[0] as EntryRow), created: true } as const;
+      return { ok: true, entry: toEntry(inserted.rows[0] as EntryRow), created: true, versionId: null } as const;
     });
+  }
+
+  async function saveVersion(q: Query, entry: EntryRow, cause: string | null, at: number): Promise<number> {
+    const row = (
+      await q.query<{ id: number }>(`INSERT INTO entry_versions (owner_uid, kind, name, body, author, cause, at) VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id`, [
+        entry.owner_uid,
+        entry.kind,
+        entry.name,
+        entry.body,
+        entry.author ?? null,
+        cause,
+        at,
+      ])
+    ).rows[0];
+    return Number(row?.id);
   }
 
   async function rewriteLinks(q: Query, ownerUid: number, kind: string, name: string, body: string): Promise<void> {
@@ -1299,10 +1430,13 @@ export function openStore(db: Database, now: () => number = Date.now) {
     return row ? toEntry(row) : null;
   }
 
-  async function deleteEntry(kind: EntryKind, ownerUid: number, name: string): Promise<boolean> {
+  async function deleteEntry(kind: EntryKind, ownerUid: number, name: string, opts: { keepHistory?: boolean } = {}): Promise<boolean> {
     const clean = cleanLine(name, MAX_ENTRY_NAME);
     return transaction(async (tx) => {
       await lock(tx, `entries:${ownerUid}:${kind}`);
+      const existing = (await tx.query<EntryRow>(`SELECT ${ENTRY_COLS} FROM entries WHERE kind = $1 AND owner_uid = $2 AND name = $3`, [kind, ownerUid, clean])).rows[0];
+      if (opts.keepHistory === false) await tx.query(`DELETE FROM entry_versions WHERE owner_uid = $1 AND kind = $2 AND name = $3`, [ownerUid, kind, clean]);
+      else if (existing) await saveVersion(tx, existing, "forget", now());
       const removed = (await tx.query(`DELETE FROM entries WHERE kind = $1 AND owner_uid = $2 AND name = $3`, [kind, ownerUid, clean])).count;
       if (removed) await tx.query(`DELETE FROM links WHERE owner_uid = $1 AND from_kind = $2 AND from_name = $3`, [ownerUid, kind, clean]);
       return removed > 0;
@@ -1653,6 +1787,165 @@ export function openStore(db: Database, now: () => number = Date.now) {
     return claimed.map((r) => r.uid);
   }
 
+  const OUTCOME_COLUMNS = `id, uid, kind, client, goal, outcome, summary, skills, score, at`;
+  const toOutcome = (r: Outcome & { skills: string[] | string }): Outcome => ({ ...r, skills: typeof r.skills === "string" ? (JSON.parse(r.skills) as string[]) : r.skills });
+
+  async function addOutcome(o: Omit<Outcome, "score" | "at"> & { at?: number }): Promise<void> {
+    await changed(
+      `INSERT INTO outcomes (id, uid, kind, client, goal, outcome, summary, skills, at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb, $9) ON CONFLICT (id) DO UPDATE SET outcome = EXCLUDED.outcome, summary = EXCLUDED.summary, skills = EXCLUDED.skills`,
+      [o.id, o.uid, o.kind, cleanLine(o.client, 80), cleanText(o.goal, 1_000), o.outcome, cleanText(o.summary, 2_000), JSON.stringify(o.skills.slice(0, 20).map((n) => cleanLine(n, MAX_ENTRY_NAME))), o.at ?? now()],
+    );
+  }
+
+  async function scoreOutcome(uid: number, id: string, score: 1 | -1): Promise<boolean> {
+    return (await changed(`UPDATE outcomes SET score = $3 WHERE uid = $1 AND id = $2`, [uid, id, score])) > 0;
+  }
+
+  async function recentOutcomes(uid: number, since: number, limit: number): Promise<Outcome[]> {
+    return (await rows<Outcome & { skills: string[] | string }>(`SELECT ${OUTCOME_COLUMNS} FROM outcomes WHERE uid = $1 AND at >= $2 ORDER BY at DESC LIMIT $3`, [uid, since, limit])).map(toOutcome);
+  }
+
+  async function gradedCount(uid: number): Promise<number> {
+    return Number((await first<{ n: number }>(`SELECT COUNT(*) AS n FROM outcomes WHERE uid = $1 AND score IS NOT NULL`, [uid]))?.n ?? 0);
+  }
+
+  async function outcomeWeeks(uid: number, since: number): Promise<Array<{ at: number; outcome: string; score: number | null }>> {
+    return rows(`SELECT at, outcome, score FROM outcomes WHERE uid = $1 AND at >= $2`, [uid, since]);
+  }
+
+  async function replayGoals(uid: number, name: string, before: number, limit: number): Promise<Outcome[]> {
+    return (
+      await rows<Outcome & { skills: string[] | string }>(
+        `SELECT ${OUTCOME_COLUMNS} FROM outcomes WHERE uid = $1 AND at < $2 AND kind IN ('run', 'ask') AND client NOT IN ('librarian', 'reflector')
+         AND score > 0 AND outcome = 'done'
+         ORDER BY (skills ? $3) DESC, at DESC LIMIT $4`,
+        [uid, before, name, limit],
+      )
+    ).map(toOutcome);
+  }
+
+  async function failingTools(uid: number, since: number): Promise<Array<{ tool: string; n: number }>> {
+    return rows(`SELECT tool, COUNT(*)::int AS n FROM audit_log WHERE uid = $1 AND at >= $2 AND NOT ok GROUP BY tool ORDER BY n DESC LIMIT 10`, [uid, since]);
+  }
+
+  const PROPOSAL_COLUMNS = `id, uid, kind, name, reason, base_body AS current, proposed, status, gate, needs_approval AS "needsApproval", source, applied_version AS "appliedVersion", applied_created AS "appliedCreated", created_at AS "createdAt", decided_at AS "decidedAt"`;
+  const toProposal = (r: Proposal & { gate: GateResult | string | null; appliedVersion: number | string | null }): Proposal => ({
+    ...r,
+    gate: typeof r.gate === "string" ? (JSON.parse(r.gate) as GateResult) : r.gate,
+    appliedVersion: r.appliedVersion === null ? null : Number(r.appliedVersion),
+  });
+
+  async function addProposal(p: { id: string; uid: number; kind: ProposalKind; name: string; reason: string; proposed: string; source: string }): Promise<"ok" | "too_many" | "unchanged" | "ambiguous"> {
+    return transaction(async (tx) => {
+      await lock(tx, `proposals:${p.uid}`);
+      const open = await count(tx, `SELECT COUNT(*) AS n FROM proposals WHERE uid = $1 AND status IN ('queued', 'testing', 'waiting')`, [p.uid]);
+      if (open >= MAX_OPEN_PROPOSALS) return "too_many";
+      const mine = await count(tx, `SELECT COUNT(*) AS n FROM proposals WHERE uid = $1 AND source = $2 AND status IN ('queued', 'testing', 'waiting')`, [p.uid, cleanLine(p.source, 80)]);
+      if (mine >= MAX_OPEN_PROPOSALS_PER_SOURCE) return "too_many";
+      const name = cleanLine(p.name, MAX_ENTRY_NAME);
+      const lookalike = await count(tx, `SELECT COUNT(*) AS n FROM entries WHERE kind = $1 AND owner_uid = $2 AND lower(name) = lower($3) AND name <> $3`, [p.kind, p.uid, name]);
+      if (lookalike > 0) return "ambiguous";
+      const body = cleanText(p.proposed, MAX_ENTRY_BODY);
+      const current = (await tx.query<{ body: string }>(`SELECT body FROM entries WHERE kind = $1 AND owner_uid = $2 AND name = $3`, [p.kind, p.uid, name])).rows[0]?.body ?? null;
+      if (current !== null && current.trim() === body.trim()) return "unchanged";
+      await tx.query(
+        `INSERT INTO proposals (id, uid, kind, name, reason, base_body, proposed, status, source, created_at) VALUES ($1, $2, $3, $4, $5, $6, $7, 'queued', $8, $9)`,
+        [p.id, p.uid, p.kind, name, cleanText(p.reason, 1_000), current, body, cleanLine(p.source, 80), now()],
+      );
+      return "ok";
+    });
+  }
+
+  async function listProposals(uid: number, limit: number): Promise<Proposal[]> {
+    return (await rows<Proposal & { gate: GateResult | string | null; appliedVersion: number | string | null }>(`SELECT ${PROPOSAL_COLUMNS} FROM proposals WHERE uid = $1 ORDER BY created_at DESC LIMIT $2`, [uid, limit])).map(toProposal);
+  }
+
+  async function getProposal(uid: number, id: string): Promise<Proposal | undefined> {
+    const row = await first<Proposal & { gate: GateResult | string | null; appliedVersion: number | string | null }>(`SELECT ${PROPOSAL_COLUMNS} FROM proposals WHERE uid = $1 AND id = $2`, [uid, id]);
+    return row ? toProposal(row) : undefined;
+  }
+
+  async function moveProposal(uid: number, id: string, from: ProposalStatus[], patch: { status: ProposalStatus; gate?: GateResult; needsApproval?: boolean; appliedVersion?: number | null; appliedCreated?: boolean; decided?: boolean }): Promise<Proposal | undefined> {
+    const row = await first<Proposal & { gate: GateResult | string | null; appliedVersion: number | string | null }>(
+      `UPDATE proposals SET status = $4,
+         gate = COALESCE($5::jsonb, gate),
+         needs_approval = COALESCE($6, needs_approval),
+         applied_version = CASE WHEN $7 THEN $8 ELSE applied_version END,
+         applied_created = CASE WHEN $7 THEN $11 ELSE applied_created END,
+         decided_at = CASE WHEN $9 THEN $10 ELSE decided_at END,
+         tested_at = CASE WHEN $4 = 'testing' THEN $10 ELSE tested_at END
+       WHERE uid = $1 AND id = $2 AND status = ANY($3::text[]) RETURNING ${PROPOSAL_COLUMNS}`,
+      [
+        uid,
+        id,
+        `{${from.join(",")}}`,
+        patch.status,
+        patch.gate ? JSON.stringify(patch.gate) : null,
+        patch.needsApproval === undefined ? null : patch.needsApproval ? "true" : "false",
+        patch.appliedVersion !== undefined ? "true" : "false",
+        patch.appliedVersion ?? null,
+        patch.decided ? "true" : "false",
+        now(),
+        patch.appliedCreated ? "true" : "false",
+      ],
+    );
+    return row ? toProposal(row) : undefined;
+  }
+
+  async function refreshProposalBase(uid: number, id: string, current: string | null): Promise<void> {
+    await changed(`UPDATE proposals SET base_body = $3 WHERE uid = $1 AND id = $2`, [uid, id, current]);
+  }
+
+  async function nextQueuedProposal(uid: number): Promise<Proposal | undefined> {
+    const row = await first<Proposal & { gate: GateResult | string | null; appliedVersion: number | string | null }>(
+      `UPDATE proposals SET status = 'testing', tested_at = $2 WHERE id = (SELECT id FROM proposals WHERE uid = $1 AND status = 'queued' ORDER BY created_at LIMIT 1 FOR UPDATE SKIP LOCKED) RETURNING ${PROPOSAL_COLUMNS}`,
+      [uid, now()],
+    );
+    return row ? toProposal(row) : undefined;
+  }
+
+  async function usersWithQueuedProposals(limit: number): Promise<number[]> {
+    return (
+      await rows<{ uid: number }>(`SELECT DISTINCT p.uid FROM proposals p JOIN brain_settings b ON b.uid = p.uid WHERE p.status = 'queued' AND b.improve LIMIT $1`, [limit])
+    ).map((r) => r.uid);
+  }
+
+  async function settleStaleTesting(uid?: number): Promise<void> {
+    await changed(`UPDATE proposals SET status = 'queued' WHERE ($1::bigint IS NULL OR uid = $1) AND status = 'testing' AND tested_at < $2`, [uid ?? null, now() - RUN_STALE_MS]);
+  }
+
+  async function humanTouched(uid: number, kind: string, name: string): Promise<boolean> {
+    const row = await first<{ human: boolean }>(
+      `SELECT EXISTS (SELECT 1 FROM entries WHERE owner_uid = $1 AND kind = $2 AND lower(name) = lower($3) AND (human_edited OR author IS NULL OR author IN ('web', 'starter')))
+           OR EXISTS (SELECT 1 FROM entry_versions WHERE owner_uid = $1 AND kind = $2 AND lower(name) = lower($3) AND (author IS NULL OR author IN ('web', 'starter'))) AS human`,
+      [uid, kind, cleanLine(name, MAX_ENTRY_NAME)],
+    );
+    return row?.human === true;
+  }
+
+  async function entryVersion(uid: number, id: number): Promise<{ id: number; kind: EntryKind; name: string; body: string; author: string | null } | undefined> {
+    return first(`SELECT id, kind, name, body, author FROM entry_versions WHERE owner_uid = $1 AND id = $2`, [uid, id]);
+  }
+
+  async function improveSettings(uid: number): Promise<{ improve: boolean; reflectedAt: number | null }> {
+    const row = await first<{ improve: boolean; reflectedAt: number | null }>(`SELECT improve, reflected_at AS "reflectedAt" FROM brain_settings WHERE uid = $1`, [uid]);
+    return row ?? { improve: false, reflectedAt: null };
+  }
+
+  async function setImprove(uid: number, on: boolean): Promise<void> {
+    await changed(`INSERT INTO brain_settings (uid, auto_build, improve) VALUES ($1, false, $2) ON CONFLICT (uid) DO UPDATE SET improve = EXCLUDED.improve`, [uid, on ? "true" : "false"]);
+  }
+
+  async function claimReflections(before: number, limit: number): Promise<number[]> {
+    const claimed = await rows<{ uid: number }>(
+      `UPDATE brain_settings SET reflected_at = $1 WHERE uid IN (
+         SELECT uid FROM brain_settings WHERE improve AND (reflected_at IS NULL OR reflected_at < $2) ORDER BY reflected_at NULLS FIRST LIMIT $3
+       ) RETURNING uid`,
+      [now(), before, limit],
+    );
+    return claimed.map((r) => r.uid);
+  }
+
   const OAUTH_COLUMNS = `owner_uid AS "ownerUid", name, url, state, sealed, created_at AS "createdAt"`;
 
   async function gatewayOAuth(ownerUid: number, name: string): Promise<GatewayOAuthRow | undefined> {
@@ -1730,6 +2023,17 @@ export function openStore(db: Database, now: () => number = Date.now) {
     const tokens = await changed(`DELETE FROM tokens WHERE revoked_at < $1 OR expires_at < $1`, [cutoff]);
     await changed(`DELETE FROM rate_limits WHERE window_start + GREATEST(window_ms, $2) < $1`, [t, HOUR_MS]);
     await changed(`DELETE FROM agent_runs WHERE created_at < $1`, [t - RETAIN_RUNS_MS]);
+    await changed(`DELETE FROM outcomes WHERE at < $1`, [t - RETAIN_OUTCOMES_MS]);
+    await changed(
+      `DELETE FROM outcomes WHERE id IN (SELECT id FROM (SELECT id, ROW_NUMBER() OVER (PARTITION BY uid ORDER BY at DESC) AS rank FROM outcomes) ranked WHERE rank > $1)`,
+      [MAX_OUTCOMES_PER_USER],
+    );
+    await changed(`DELETE FROM proposals WHERE created_at < $1`, [t - RETAIN_OUTCOMES_MS]);
+    await changed(`DELETE FROM entry_versions WHERE at < $1`, [t - RETAIN_VERSIONS_MS]);
+    await changed(
+      `DELETE FROM entry_versions WHERE id IN (SELECT id FROM (SELECT id, ROW_NUMBER() OVER (PARTITION BY owner_uid, kind, name ORDER BY id DESC) AS rank FROM entry_versions) ranked WHERE rank > $1)`,
+      [MAX_VERSIONS_PER_ENTRY],
+    );
     await changed(
       `DELETE FROM gateway_oauth o WHERE o.created_at < $1 AND NOT EXISTS (SELECT 1 FROM gateway_servers g WHERE g.owner_uid = o.owner_uid AND g.name = o.name)`,
       [t - HOUR_MS],
@@ -1767,6 +2071,26 @@ export function openStore(db: Database, now: () => number = Date.now) {
     deleteGateway,
     gatewayOAuth,
     claimGatewayOAuth,
+    addOutcome,
+    scoreOutcome,
+    recentOutcomes,
+    gradedCount,
+    outcomeWeeks,
+    replayGoals,
+    failingTools,
+    addProposal,
+    listProposals,
+    getProposal,
+    moveProposal,
+    nextQueuedProposal,
+    refreshProposalBase,
+    usersWithQueuedProposals,
+    settleStaleTesting,
+    humanTouched,
+    entryVersion,
+    improveSettings,
+    setImprove,
+    claimReflections,
     createRun,
     addRunStep,
     finishRun,

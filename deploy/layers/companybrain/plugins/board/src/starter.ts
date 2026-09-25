@@ -526,7 +526,7 @@ export async function seedStarterKit(store: Store, profile: Profile, opts: { abo
   const everything = opts.packs === undefined;
   const items = [...(everything ? CORE : []), ...packs.flatMap((p) => PACKS[p]), ...agentsIn(packs).map(agentRole)];
   for (const item of items) {
-    await store.putEntry({ kind: item.kind, ownerUid: profile.uid, name: item.name, body: (current) => (current === null ? item.body(ctx) : null) });
+    await store.putEntry({ kind: item.kind, ownerUid: profile.uid, name: item.name, author: "starter", body: (current) => (current === null ? item.body(ctx) : null) });
   }
   if (!everything) return;
   for (const doc of documents(ctx)) await store.putUpload(profile.uid, doc.name, doc.title, doc.body, { createOnly: true });
