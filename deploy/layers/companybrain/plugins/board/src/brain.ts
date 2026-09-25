@@ -180,9 +180,14 @@ export function readHistory(raw: unknown): Turn[] {
 const OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions";
 const GATEWAY_URL = "https://ai-gateway.vercel.sh/v1/chat/completions";
 const DEFAULT_MODEL = "anthropic/claude-sonnet-5";
+const OPENROUTER_FREE_MODEL = "openrouter/free";
+const OPENROUTER_FREE_FALLBACKS = "qwen/qwen3.8-27b:free,google/gemma-4-31b-it:free";
 const FREE_TIER_MODEL = "openai/gpt-4.1-mini";
 const ANSWER_DEADLINE_MS = 90_000;
 const HOPELESS = new Set([400, 413, 422]);
+const WRONG_KEY = new Set([401, 402]);
+const EARLY_ATTEMPT_MS = 25_000;
+const GROUP_BUDGET_MS = 45_000;
 
 interface Provider {
   group: "openrouter" | "gateway";
@@ -197,14 +202,19 @@ export function modelProviders(env: NodeJS.ProcessEnv, oidc: () => Promise<strin
   const list: Provider[] = [];
   const openrouter = env.OPENROUTER_API_KEY;
   if (openrouter) {
-    list.push({
-      group: "openrouter",
-      url: OPENROUTER_URL,
-      model: env.OPENROUTER_MODEL || DEFAULT_MODEL,
-      token: async () => openrouter,
-      headers: { "x-title": "Company Brain", ...(env.PUBLIC_URL ? { "http-referer": env.PUBLIC_URL } : {}) },
-      onlyAfterForbidden: false,
-    });
+    const models = [env.OPENROUTER_MODEL || OPENROUTER_FREE_MODEL, ...(env.OPENROUTER_FALLBACK_MODELS ?? OPENROUTER_FREE_FALLBACKS).split(",")]
+      .map((m) => m.trim())
+      .filter((m, i, all) => m && all.indexOf(m) === i);
+    for (const model of models) {
+      list.push({
+        group: "openrouter",
+        url: OPENROUTER_URL,
+        model,
+        token: async () => openrouter,
+        headers: { "x-title": "Company Brain", ...(env.PUBLIC_URL ? { "http-referer": env.PUBLIC_URL } : {}) },
+        onlyAfterForbidden: false,
+      });
+    }
   }
   const key = env.AI_GATEWAY_API_KEY;
   if (key || env.VERCEL) {
@@ -235,9 +245,19 @@ export function createModel(env: NodeJS.ProcessEnv, fetchImpl: typeof fetch = fe
     const tokens = new Map<Provider["group"], Promise<string>>();
     const deadGroups = new Set<Provider["group"]>();
     let previous: number | null = null;
+    const groupStarted = new Map<Provider["group"], number>();
     for (const [i, p] of providers.entries()) {
       if (deadline.aborted) break;
       if (deadGroups.has(p.group) || (p.onlyAfterForbidden && previous !== 403)) continue;
+      const laterGroup = providers.slice(i + 1).some((next) => next.group !== p.group);
+      if (!groupStarted.has(p.group)) groupStarted.set(p.group, Date.now());
+      const groupLeft = GROUP_BUDGET_MS - (Date.now() - (groupStarted.get(p.group) as number));
+      if (laterGroup && groupLeft < 1_000) {
+        deadGroups.add(p.group);
+        failures.push("slow");
+        continue;
+      }
+      const attemptMs = laterGroup ? Math.min(EARLY_ATTEMPT_MS, groupLeft) : MODEL_TIMEOUT_MS;
       let token: string;
       try {
         if (!tokens.has(p.group)) tokens.set(p.group, p.token());
@@ -253,13 +273,13 @@ export function createModel(env: NodeJS.ProcessEnv, fetchImpl: typeof fetch = fe
           method: "POST",
           headers: { authorization: `Bearer ${token}`, "content-type": "application/json", ...p.headers },
           body: JSON.stringify({ model: p.model, max_tokens: 900, messages: [{ role: "user", content: prompt }] }),
-          signal: AbortSignal.any([deadline, AbortSignal.timeout(MODEL_TIMEOUT_MS)]),
+          signal: AbortSignal.any([deadline, AbortSignal.timeout(attemptMs)]),
         });
         previous = res.status;
         if (!res.ok) {
           failures.push(String(res.status));
           console.error(`model ${p.group} ${p.model} failed with ${res.status}`);
-          if (HOPELESS.has(res.status)) break;
+          if (HOPELESS.has(res.status) || WRONG_KEY.has(res.status)) deadGroups.add(p.group);
           continue;
         }
         let body: { choices?: Array<{ message?: { content?: string } }> };

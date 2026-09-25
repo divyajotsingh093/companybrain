@@ -217,6 +217,22 @@ export interface Post {
 
 const disownMemory = (kind: EntryKind, body: string): string => (kind === "memory" ? body.replace(/^(---\n[\s\S]*?)\nsource: auto(?=\n)/, "$1") : body);
 
+export type GatewayAuth = "token" | "oauth";
+
+export interface GatewayOAuthRow {
+  ownerUid: number;
+  name: string;
+  url: string;
+  state: string;
+  sealed: string | null;
+  createdAt: number;
+}
+
+export interface GatewayOAuthRows {
+  read(): Promise<GatewayOAuthRow | undefined>;
+  save(url: string, sealed: string): Promise<void>;
+}
+
 export type PutEntryResult =
   | { ok: true; entry: Entry; created: boolean }
   | { ok: false; reason: "entry_quota" | "empty_name" | "refused" | "too_long" };
@@ -535,6 +551,17 @@ const SCHEMA = `
     created_at BIGINT NOT NULL,
     PRIMARY KEY (owner_uid, name)
   );
+  ALTER TABLE gateway_servers ADD COLUMN IF NOT EXISTS auth TEXT NOT NULL DEFAULT 'token';
+  CREATE TABLE IF NOT EXISTS gateway_oauth (
+    owner_uid BIGINT NOT NULL,
+    name TEXT NOT NULL,
+    url TEXT NOT NULL,
+    state TEXT NOT NULL,
+    sealed TEXT,
+    created_at BIGINT NOT NULL,
+    PRIMARY KEY (owner_uid, name)
+  );
+  CREATE UNIQUE INDEX IF NOT EXISTS gateway_oauth_state ON gateway_oauth (state);
   ALTER TABLE posts DROP CONSTRAINT IF EXISTS posts_decision_needs_resolution;
   ALTER TABLE posts ADD CONSTRAINT posts_decision_needs_resolution CHECK (type <> 'decision' OR closed_at IS NULL OR resolution IS NOT NULL);
   CREATE TABLE IF NOT EXISTS entries (
@@ -632,7 +659,7 @@ export function openStore(db: Database, now: () => number = Date.now) {
       .transaction(async (tx) => {
         await tx.query(`SET LOCAL lock_timeout = '10s'`);
         const current = async () =>
-          (await tx.query<{ ok: boolean }>(`SELECT to_regclass('rate_limits') IS NOT NULL AND to_regclass('posts_open') IS NOT NULL AND to_regclass('audit_log_at') IS NOT NULL AND to_regclass('board_events_repo_id') IS NOT NULL AND to_regclass('entries_listing') IS NOT NULL AND to_regclass('posts_open_decisions') IS NOT NULL AND to_regclass('documents_search_v2') IS NOT NULL AND to_regclass('entries_search') IS NOT NULL AND to_regclass('links_incoming') IS NOT NULL AND to_regclass('work_updates_task') IS NOT NULL AND to_regclass('gateway_servers') IS NOT NULL AND to_regclass('suggestion_events_uid') IS NOT NULL AND to_regclass('profiles') IS NOT NULL AS ok`)).rows[0]?.ok;
+          (await tx.query<{ ok: boolean }>(`SELECT to_regclass('rate_limits') IS NOT NULL AND to_regclass('posts_open') IS NOT NULL AND to_regclass('audit_log_at') IS NOT NULL AND to_regclass('board_events_repo_id') IS NOT NULL AND to_regclass('entries_listing') IS NOT NULL AND to_regclass('posts_open_decisions') IS NOT NULL AND to_regclass('documents_search_v2') IS NOT NULL AND to_regclass('entries_search') IS NOT NULL AND to_regclass('links_incoming') IS NOT NULL AND to_regclass('work_updates_task') IS NOT NULL AND to_regclass('gateway_servers') IS NOT NULL AND to_regclass('suggestion_events_uid') IS NOT NULL AND to_regclass('profiles') IS NOT NULL AND to_regclass('gateway_oauth_state') IS NOT NULL AS ok`)).rows[0]?.ok;
         if (await current()) return;
         await lock(tx, "companybrain-board:schema");
         if (await current()) return;
@@ -988,6 +1015,7 @@ export function openStore(db: Database, now: () => number = Date.now) {
       await tx.query(`DELETE FROM credentials WHERE uid = $1`, [uid]);
       await tx.query(`DELETE FROM audit_log WHERE uid = $1`, [uid]);
       await tx.query(`DELETE FROM gateway_servers WHERE owner_uid = $1`, [uid]);
+      await tx.query(`DELETE FROM gateway_oauth WHERE owner_uid = $1`, [uid]);
       await tx.query(`DELETE FROM suggestion_events WHERE uid = $1`, [uid]);
       await tx.query(`DELETE FROM profiles WHERE uid = $1`, [uid]);
     });
@@ -1466,33 +1494,74 @@ export function openStore(db: Database, now: () => number = Date.now) {
     await changed(`UPDATE profiles SET asked_at = $2 WHERE uid = $1 AND asked_at IS NULL`, [uid, now()]);
   }
 
-  async function listGateways(ownerUid: number): Promise<Array<{ name: string; url: string; hasToken: boolean; createdAt: number }>> {
+  async function listGateways(ownerUid: number): Promise<Array<{ name: string; url: string; auth: GatewayAuth; hasToken: boolean; createdAt: number }>> {
     return rows(
-      `SELECT name, url, token_sealed IS NOT NULL AS "hasToken", created_at AS "createdAt" FROM gateway_servers WHERE owner_uid = $1 ORDER BY name`,
+      `SELECT name, url, auth, (token_sealed IS NOT NULL OR auth = 'oauth') AS "hasToken", created_at AS "createdAt" FROM gateway_servers WHERE owner_uid = $1 ORDER BY name`,
       [ownerUid],
     );
   }
 
-  async function gateway(ownerUid: number, name: string): Promise<{ name: string; url: string; tokenSealed: string | null } | undefined> {
-    return first(`SELECT name, url, token_sealed AS "tokenSealed" FROM gateway_servers WHERE owner_uid = $1 AND name = $2`, [ownerUid, name]);
+  async function gateway(ownerUid: number, name: string): Promise<{ name: string; url: string; auth: GatewayAuth; tokenSealed: string | null } | undefined> {
+    return first(`SELECT name, url, auth, token_sealed AS "tokenSealed" FROM gateway_servers WHERE owner_uid = $1 AND name = $2`, [ownerUid, name]);
   }
 
-  async function putGateway(ownerUid: number, g: { name: string; url: string; tokenSealed: string | null }, max: number): Promise<boolean> {
+  async function putGateway(ownerUid: number, g: { name: string; url: string; tokenSealed: string | null; auth?: GatewayAuth }, max: number): Promise<boolean> {
+    const auth = g.auth ?? "token";
     return transaction(async (tx) => {
       await lock(tx, `gateways:${ownerUid}`);
       const held = await count(tx, `SELECT COUNT(*) AS n FROM gateway_servers WHERE owner_uid = $1 AND name <> $2`, [ownerUid, g.name]);
       if (held >= max) return false;
       await tx.query(
-        `INSERT INTO gateway_servers (owner_uid, name, url, token_sealed, created_at) VALUES ($1, $2, $3, $4, $5)
-         ON CONFLICT (owner_uid, name) DO UPDATE SET url = EXCLUDED.url, token_sealed = EXCLUDED.token_sealed`,
-        [ownerUid, g.name, g.url, g.tokenSealed, now()],
+        `INSERT INTO gateway_servers (owner_uid, name, url, token_sealed, auth, created_at) VALUES ($1, $2, $3, $4, $5, $6)
+         ON CONFLICT (owner_uid, name) DO UPDATE SET url = EXCLUDED.url, token_sealed = EXCLUDED.token_sealed, auth = EXCLUDED.auth`,
+        [ownerUid, g.name, g.url, g.tokenSealed, auth, now()],
       );
+      if (auth !== "oauth") await tx.query(`DELETE FROM gateway_oauth WHERE owner_uid = $1 AND name = $2`, [ownerUid, g.name]);
       return true;
     });
   }
 
   async function deleteGateway(ownerUid: number, name: string): Promise<boolean> {
-    return (await changed(`DELETE FROM gateway_servers WHERE owner_uid = $1 AND name = $2`, [ownerUid, name])) > 0;
+    return transaction(async (tx) => {
+      await tx.query(`DELETE FROM gateway_oauth WHERE owner_uid = $1 AND name = $2`, [ownerUid, name]);
+      return (await tx.query(`DELETE FROM gateway_servers WHERE owner_uid = $1 AND name = $2`, [ownerUid, name])).count > 0;
+    });
+  }
+
+  const OAUTH_COLUMNS = `owner_uid AS "ownerUid", name, url, state, sealed, created_at AS "createdAt"`;
+
+  async function gatewayOAuth(ownerUid: number, name: string): Promise<GatewayOAuthRow | undefined> {
+    return first(`SELECT ${OAUTH_COLUMNS} FROM gateway_oauth WHERE owner_uid = $1 AND name = $2`, [ownerUid, name]);
+  }
+
+  async function claimGatewayOAuth(ownerUid: number, state: string, since: number, nextState: string): Promise<GatewayOAuthRow | undefined> {
+    return first(`UPDATE gateway_oauth SET state = $4 WHERE owner_uid = $1 AND state = $2 AND created_at > $3 RETURNING ${OAUTH_COLUMNS}`, [ownerUid, state, since, nextState]);
+  }
+
+  async function withGatewayOAuthLock<T>(ownerUid: number, name: string, run: (held: GatewayOAuthRows) => Promise<T>): Promise<T> {
+    return transaction(async (tx) => {
+      await tx.query(`SET LOCAL lock_timeout = '15s'`);
+      await lock(tx, `gateway-oauth:${ownerUid}:${name}`);
+      return run({
+        read: async () => (await tx.query<GatewayOAuthRow>(`SELECT ${OAUTH_COLUMNS} FROM gateway_oauth WHERE owner_uid = $1 AND name = $2`, [ownerUid, name])).rows[0],
+        save: async (url, sealed) => {
+          await tx.query(`UPDATE gateway_oauth SET sealed = $4 WHERE owner_uid = $1 AND name = $2 AND url = $3`, [ownerUid, name, url, sealed]);
+        },
+      });
+    });
+  }
+
+  async function startGatewayOAuth(ownerUid: number, name: string, url: string, state: string): Promise<void> {
+    await changed(
+      `INSERT INTO gateway_oauth (owner_uid, name, url, state, created_at) VALUES ($1, $2, $3, $4, $5)
+       ON CONFLICT (owner_uid, name) DO UPDATE SET state = EXCLUDED.state, created_at = EXCLUDED.created_at,
+         sealed = CASE WHEN gateway_oauth.url = EXCLUDED.url THEN gateway_oauth.sealed END, url = EXCLUDED.url`,
+      [ownerUid, name, url, state, now()],
+    );
+  }
+
+  async function saveGatewayOAuth(ownerUid: number, name: string, url: string, sealed: string): Promise<void> {
+    await changed(`UPDATE gateway_oauth SET sealed = $4 WHERE owner_uid = $1 AND name = $2 AND url = $3`, [ownerUid, name, url, sealed]);
   }
 
   async function deleteUpload(ownerUid: number, name: string): Promise<boolean> {
@@ -1535,6 +1604,10 @@ export function openStore(db: Database, now: () => number = Date.now) {
     );
     const tokens = await changed(`DELETE FROM tokens WHERE revoked_at < $1 OR expires_at < $1`, [cutoff]);
     await changed(`DELETE FROM rate_limits WHERE window_start < $1`, [t - HOUR_MS]);
+    await changed(
+      `DELETE FROM gateway_oauth o WHERE o.created_at < $1 AND NOT EXISTS (SELECT 1 FROM gateway_servers g WHERE g.owner_uid = o.owner_uid AND g.name = o.name)`,
+      [t - HOUR_MS],
+    );
     await changed(`DELETE FROM audit_log WHERE at < $1`, [t - RETAIN_AUDIT_MS]);
     await changed(`DELETE FROM board_events WHERE at < $1`, [t - RETAIN_POSTS_MS]);
     await changed(
@@ -1566,6 +1639,11 @@ export function openStore(db: Database, now: () => number = Date.now) {
     gateway,
     putGateway,
     deleteGateway,
+    gatewayOAuth,
+    claimGatewayOAuth,
+    withGatewayOAuthLock,
+    startGatewayOAuth,
+    saveGatewayOAuth,
     putEntry,
     connections,
     recordSuggestion,

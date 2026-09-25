@@ -1,9 +1,10 @@
 import { useEffect, useState, type JSX } from "react";
 import { AlertBanner, Button, Caption, Card, EmptyState, Heading, ListItem, Skeleton, Stack, Text, TextInput, tokens, usePal } from "./ui";
 import { ApiError, clientName, THEME, get, post, reason, send, when } from "./shared";
+import { Directory } from "./directory";
 
 interface GatewayView {
-  servers: Array<{ name: string; url: string; hasToken: boolean; createdAt: number }>;
+  servers: Array<{ name: string; url: string; auth: "token" | "oauth"; hasToken: boolean; signedIn: boolean; createdAt: number }>;
   calls: Array<{ at: number; client: string; subject: string | null; ok: boolean }>;
   max: number;
   model: { configured: boolean; summary: { model: string; provider: string; fallback: string | null } | null; dailyLimit: number };
@@ -12,6 +13,13 @@ interface GatewayView {
 }
 
 const NAME_RULE = /^[a-z0-9][a-z0-9-]{0,39}$/;
+
+const SIGN_IN_FAILED: Record<string, string> = {
+  expired: "That sign-in link expired or belongs to another session. Start again from the directory.",
+  denied: "The sign-in was cancelled, so nothing was connected.",
+  too_many: "You have reached the server limit. Remove one, then sign in again.",
+  signin: "The server did not accept the sign-in. Try again, or check you have access to it.",
+};
 
 export function GatewayScreen(): JSX.Element {
   const pal = usePal(THEME);
@@ -35,6 +43,17 @@ export function GatewayScreen(): JSX.Element {
   };
 
   useEffect(load, []);
+
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const connected = params.get("connected");
+    const failed = params.get("failed");
+    const named = params.get("name");
+    const server = named && NAME_RULE.test(named) ? named : "the server";
+    if (connected && NAME_RULE.test(connected)) setNotice({ ok: true, text: `Signed in to ${connected}. Your agents can use it now.` });
+    else if (failed) setNotice({ ok: false, text: SIGN_IN_FAILED[failed] ?? `Signing in to ${server} did not finish. Try again.` });
+    if (connected || failed) window.history.replaceState(null, "", "/app");
+  }, []);
 
   const cleanName = name.trim().toLowerCase();
   const nameProblem = cleanName && !NAME_RULE.test(cleanName) ? "Lowercase letters, numbers and dashes, up to 40 characters." : undefined;
@@ -95,7 +114,7 @@ export function GatewayScreen(): JSX.Element {
               <ListItem
                 key={s.name}
                 title={s.name}
-                subtitle={`${s.url} · ${s.hasToken ? "token stored" : "no token"} · added ${when(s.createdAt, view.now)}`}
+                subtitle={`${s.url} · ${s.auth === "oauth" ? (s.signedIn ? "signed in" : "sign-in needed") : s.hasToken ? "token stored" : "no token"} · added ${when(s.createdAt, view.now)}`}
                 right={
                   confirm === s.name ? (
                     <Stack direction="row" gap={6} align="center">
@@ -117,7 +136,7 @@ export function GatewayScreen(): JSX.Element {
               />
             ))
           ) : (
-            <EmptyState title="No servers yet" description="Add one below. Your agents see it through gateway_servers, gateway_tools and gateway_call." theme={THEME} />
+            <EmptyState title="No servers yet" description="Connect one from the directory below, or add one by address. Your agents see it through gateway_servers, gateway_tools and gateway_call." theme={THEME} />
           )}
         </Card>
 
@@ -151,6 +170,16 @@ export function GatewayScreen(): JSX.Element {
         </Card>
         {notice ? <AlertBanner variant={notice.ok ? "success" : "danger"} title={notice.text} theme={THEME} /> : null}
       </Stack>
+
+      <Directory
+        connected={new Set(view.servers.filter((s) => s.signedIn).map((s) => s.name))}
+        stale={new Set(view.servers.filter((s) => !s.signedIn).map((s) => s.name))}
+        full={view.servers.length >= view.max}
+        onConnected={(text) => {
+          setNotice({ ok: true, text });
+          load();
+        }}
+      />
 
       <Stack gap={10}>
         <Heading level={5} theme={THEME}>

@@ -7,7 +7,9 @@ import { createHash, randomBytes } from "node:crypto";
 import type { AccessChecker } from "./access.ts";
 import { canModerate, canUseBoard } from "./access.ts";
 import { answerQuestion, createModel, indexRepo, type Model, modelSummary, readHistory, titleOf } from "./brain.ts";
-import { GATEWAY_NAME, gatewayUrlProblem, MAX_GATEWAYS, openUpstream, publicFetch, sealGatewayToken } from "./gateway.ts";
+import { auth as upstreamAuth } from "@modelcontextprotocol/sdk/client/auth.js";
+import { DIRECTORY } from "./directory.ts";
+import { GATEWAY_NAME, GATEWAY_OAUTH_TTL_MS, gatewayOAuthProvider, gatewayUrlProblem, guardedFetch, MAX_GATEWAYS, openUpstream, publicFetch, sealGatewayToken } from "./gateway.ts";
 import type { Auth, Principal } from "./auth.ts";
 import type { Config } from "./config.ts";
 import { assertRepo, exchangeCode, type Fetch, type GitHubClient, GitHubError } from "./github.ts";
@@ -22,7 +24,7 @@ import { isMemoryType, MEMORY_PURPOSE, parseMemory, renderMemory } from "./memor
 import { learnInto, PART_PURPOSE, parseSkill, pulse, renderSkill, SKILL_PARTS, STALE_AFTER_MS } from "./skills.ts";
 import { candidates, rank, type Signals } from "./suggest.ts";
 import { cleanLine, cleanText } from "./untrusted.ts";
-import { ACTIVE_AGENT_TOKENS_PER_USER, ENTRY_KINDS, KIND_PURPOSE, MAX_DOC_BODY, MAX_ENTRY_BODY, MAX_ENTRY_NAME, MAX_UPLOAD_NAME, type Store } from "./store.ts";
+import { ACTIVE_AGENT_TOKENS_PER_USER, ENTRY_KINDS, type GatewayOAuthRows, KIND_PURPOSE, MAX_DOC_BODY, MAX_ENTRY_BODY, MAX_ENTRY_NAME, MAX_UPLOAD_NAME, type Store } from "./store.ts";
 import { hashToken, isAgentClient, seal, unseal } from "./token.ts";
 import { type ErrorCode, isErrorCode, renderBoard, renderConnected, renderDenied, renderHome, renderConsent, renderMessage, renderTokenCreated } from "./web.ts";
 import { renderWelcome, WELCOME_CSP } from "./welcome.ts";
@@ -683,15 +685,113 @@ export function createApp(deps: AppDeps): Hono {
     return c.json({ ok: true });
   });
 
+  const upstreamFetch = deps.gatewayFetch ?? publicFetch;
+  const oauthCallbackUrl = `${config.publicUrl}/gateway/oauth/callback`;
+  const storedRows = (uid: number, name: string): GatewayOAuthRows => ({
+    read: () => store.gatewayOAuth(uid, name),
+    save: (url, sealed) => store.saveGatewayOAuth(uid, name, url, sealed),
+  });
+  const providerFor = (rows: GatewayOAuthRows, url: string, live: boolean, state = "") =>
+    gatewayOAuthProvider({ rows, secret: config.secret, url, state, callbackUrl: oauthCallbackUrl, live, now });
+
+  const refreshIfDue = async (uid: number, name: string, url: string) =>
+    (await providerFor(storedRows(uid, name), url, true).refreshDue()) &&
+    store
+      .withGatewayOAuthLock(uid, name, async (held) => {
+        const flow = providerFor(held, url, true);
+        if (await flow.refreshDue()) await upstreamAuth(flow.provider, { serverUrl: url, fetchFn: guardedFetch(upstreamFetch) });
+      })
+      .catch((err: unknown) => console.error(`gateway refresh failed: ${err instanceof Error ? err.name : typeof err}`));
+
   const upstreamFor = (uid: number) => async (name: string) => {
     const g = await store.gateway(uid, name);
-    return g ? openUpstream({ url: g.url, sealedToken: g.tokenSealed, secret: config.secret, fetch: deps.gatewayFetch ?? publicFetch }) : null;
+    if (!g) return null;
+    if (g.auth !== "oauth") return openUpstream({ url: g.url, sealedToken: g.tokenSealed, secret: config.secret, fetch: upstreamFetch });
+    await refreshIfDue(uid, name, g.url);
+    return openUpstream({ url: g.url, sealedToken: null, secret: config.secret, fetch: upstreamFetch, authProvider: providerFor(storedRows(uid, name), g.url, true).provider });
   };
+
+  const finishOAuthServer = async (uid: number, login: string, name: string, url: string): Promise<number> => {
+    const upstream = await openUpstream({ url, sealedToken: null, secret: config.secret, fetch: upstreamFetch, authProvider: providerFor(storedRows(uid, name), url, true).provider });
+    let tools: number;
+    try {
+      tools = (await upstream.tools()).length;
+    } finally {
+      await upstream.close().catch(() => undefined);
+    }
+    if (!(await store.putGateway(uid, { name, url: new URL(url).href, tokenSealed: null, auth: "oauth" }, MAX_GATEWAYS))) throw new Error("too_many");
+    await quietly("reference", async () => {
+      await seedReference(store, uid, name, url, tools);
+      await weaveHarness(uid, login);
+    });
+    return tools;
+  };
+
+  app.get("/api/app/directory", async (c) => {
+    const principal = await session(c);
+    if (!principal) return c.json({ error: "sign_in" }, 401);
+    c.header("cache-control", "private, max-age=3600");
+    return c.json({ servers: DIRECTORY.filter((d) => d.transport === "http") });
+  });
+
+  app.post("/api/app/gateway/oauth/start", jsonLimit, async (c) => {
+    const principal = await session(c);
+    if (!principal) return c.json({ error: "sign_in" }, 401);
+    if (!sameOrigin(c)) return c.json({ error: "blocked" }, 403);
+    const payload = (await c.req.json().catch(() => null)) as { name?: unknown; url?: unknown } | null;
+    const name = typeof payload?.name === "string" ? payload.name.trim().toLowerCase() : "";
+    const url = typeof payload?.url === "string" ? payload.url.trim() : "";
+    if (!GATEWAY_NAME.test(name) || !url || url.length > 500) return c.json({ error: "bad_fields" }, 400);
+    const problem = gatewayUrlProblem(url);
+    if (problem) return c.json({ error: "bad_url", message: problem }, 400);
+    if ((await store.hit(`gateway-add:${principal.uid}`, 60_000)) > 10) return c.json({ error: "rate_limited" }, 429);
+    const held = await store.listGateways(principal.uid);
+    if (held.length >= MAX_GATEWAYS && !held.some((g) => g.name === name)) return c.json({ error: "too_many" }, 409);
+    await store.startGatewayOAuth(principal.uid, name, new URL(url).href, randomBytes(24).toString("base64url"));
+    const row = await store.gatewayOAuth(principal.uid, name);
+    if (!row) return c.json({ error: "unavailable" }, 503);
+    const flow = providerFor(storedRows(principal.uid, name), row.url, false, row.state);
+    try {
+      const result = await upstreamAuth(flow.provider, { serverUrl: row.url, fetchFn: guardedFetch(upstreamFetch) });
+      if (result === "REDIRECT") {
+        const target = flow.authorizationUrl();
+        if (!target || target.protocol !== "https:") return c.json({ error: "unreachable", message: "The server did not offer a secure sign-in page." }, 400);
+        return c.json({ redirect: target.toString() });
+      }
+      return c.json({ ok: true, name, tools: await finishOAuthServer(principal.uid, principal.login, name, row.url) });
+    } catch (err) {
+      if (err instanceof Error && err.message === "too_many") return c.json({ error: "too_many" }, 409);
+      console.error(`gateway sign-in start failed: ${err instanceof Error ? err.name : typeof err}`);
+      return c.json({ error: "unreachable", message: "That server's sign-in could not be started. Check the address, or try again later." }, 400);
+    }
+  });
+
+  app.get("/gateway/oauth/callback", async (c) => {
+    const principal = await session(c);
+    if (!principal) return c.redirect("/");
+    const back = (params: Record<string, string>) => c.redirect(`/app?${new URLSearchParams({ screen: "gateway", ...params }).toString()}`);
+    const state = c.req.query("state") ?? "";
+    const row = state ? await store.claimGatewayOAuth(principal.uid, state, now() - GATEWAY_OAUTH_TTL_MS, randomBytes(24).toString("base64url")) : undefined;
+    if (!row) return back({ failed: "expired" });
+    const code = c.req.query("code");
+    if (!code) return back({ failed: "denied", name: row.name });
+    try {
+      const result = await upstreamAuth(providerFor(storedRows(row.ownerUid, row.name), row.url, false, state).provider, { serverUrl: row.url, authorizationCode: code, fetchFn: guardedFetch(upstreamFetch) });
+      if (result !== "AUTHORIZED") return back({ failed: "signin", name: row.name });
+      await finishOAuthServer(row.ownerUid, principal.login, row.name, row.url);
+      return back({ connected: row.name });
+    } catch (err) {
+      return back({ failed: err instanceof Error && err.message === "too_many" ? "too_many" : "signin", name: row.name });
+    }
+  });
 
   app.get("/api/app/gateway", async (c) => {
     const principal = await session(c);
     if (!principal) return c.json({ error: "sign_in" }, 401);
-    const [servers, calls] = await Promise.all([store.listGateways(principal.uid), store.auditTrail(principal.uid, 50, "gateway_call")]);
+    const [listed, calls] = await Promise.all([store.listGateways(principal.uid), store.auditTrail(principal.uid, 50, "gateway_call")]);
+    const servers = await Promise.all(
+      listed.map(async (g) => ({ ...g, signedIn: g.auth === "oauth" ? await providerFor(storedRows(principal.uid, g.name), g.url, true).signedIn() : true })),
+    );
     return c.json({ servers, calls, max: MAX_GATEWAYS, model: { configured: model !== null, summary: modelSummary(process.env), dailyLimit: ASK_PER_DAY }, mcpUrl: `${config.publicUrl}/mcp`, now: now() });
   });
 

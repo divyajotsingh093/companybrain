@@ -896,7 +896,7 @@ export function App(): JSX.Element {
   const [me, setMe] = useState<Me | null>(null);
   const [board, setBoard] = useState<BoardView | null>(null);
   const [loading, setLoading] = useState(true);
-  const [screen, setScreen] = useState<Screen>("home");
+  const [screen, setScreen] = useState<Screen>(() => (new URLSearchParams(window.location.search).get("screen") === "gateway" ? "gateway" : "home"));
   const [sources, setSources] = useState<Sources | null>(null);
   const [sourcesError, setSourcesError] = useState<string | null>(null);
   const [brain, setBrain] = useState<Brain | null>(null);

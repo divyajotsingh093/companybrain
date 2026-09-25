@@ -1,3 +1,4 @@
+import { UnauthorizedError } from "@modelcontextprotocol/sdk/client/auth.js";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { type AccessChecker, canModerate, canUseBoard, type RepoAccess } from "./access.ts";
@@ -661,7 +662,9 @@ export function createBoardServer(deps: BoardDeps): McpServer {
   }
 
   const upstreamFailure = (name: string, err: unknown): Result =>
-    failure(`The ${name} server did not answer.\n${createFence().wrap(`gateway:${name}`, cleanLine(err instanceof Error ? err.message : "unknown error", 300))}`);
+    err instanceof UnauthorizedError
+      ? failure(`The ${name} server needs the person to sign in to it again. Ask them to open ${publicUrl}/app, go to Gateway, and choose Sign in again next to ${name}.`)
+      : failure(`The ${name} server did not answer.\n${createFence().wrap(`gateway:${name}`, cleanLine(err instanceof Error ? err.message : "unknown error", 300))}`);
 
   server.registerTool(
     "gateway_servers",
