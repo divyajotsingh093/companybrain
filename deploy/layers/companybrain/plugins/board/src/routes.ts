@@ -12,6 +12,7 @@ import type { Config } from "./config.ts";
 import { assertRepo, exchangeCode, type Fetch, type GitHubClient, GitHubError } from "./github.ts";
 import type { RateLimiter } from "./limits.ts";
 import { APP_JS_BASE64 } from "./app-bundle.ts";
+import { FAVICON } from "./brand.ts";
 import { createBoardServer, describeError, TOOL_NAMES } from "./mcp.ts";
 import { forgetReference, quietly, seedHarnessSkill, seedPerson, seedProject, seedReference } from "./seed.ts";
 import { AGREEMENT, agentCards, HANDBOOK, packsOf, readWelcome, seedStarterKit, type WelcomeInput } from "./starter.ts";
@@ -21,7 +22,8 @@ import { candidates, rank, type Signals } from "./suggest.ts";
 import { cleanLine, cleanText } from "./untrusted.ts";
 import { ACTIVE_AGENT_TOKENS_PER_USER, ENTRY_KINDS, KIND_PURPOSE, MAX_DOC_BODY, MAX_ENTRY_BODY, MAX_ENTRY_NAME, MAX_UPLOAD_NAME, type Store } from "./store.ts";
 import { hashToken, isAgentClient, seal, unseal } from "./token.ts";
-import { type ErrorCode, isErrorCode, renderBoard, renderConnected, renderDenied, renderHome, renderMessage, renderTokenCreated, renderWelcome } from "./web.ts";
+import { type ErrorCode, isErrorCode, renderBoard, renderConnected, renderDenied, renderHome, renderMessage, renderTokenCreated } from "./web.ts";
+import { renderWelcome, WELCOME_CSP } from "./welcome.ts";
 
 export interface AppDeps {
   model?: Model;
@@ -54,7 +56,7 @@ const WELCOME_PER_MINUTE = 10;
 const SUGGEST_PER_MINUTE = 30;
 const REINDEX_BUDGET_MS = 150_000;
 const INDEX_PER_MINUTE = 6;
-const CSP = "default-src 'none'; style-src 'unsafe-inline'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'";
+const CSP = "default-src 'none'; style-src 'unsafe-inline'; img-src data:; form-action 'self'; frame-ancestors 'none'; base-uri 'none'";
 
 export function createApp(deps: AppDeps): Hono {
   const { config, store, auth, access, githubFor, limiter } = deps;
@@ -245,6 +247,7 @@ export function createApp(deps: AppDeps): Hono {
     const values: WelcomeInput = existing
       ? { name: existing.name, email: existing.email, company: existing.company, role: existing.role, teamSize: existing.teamSize, goals: existing.goals, agents: existing.agents, kit: existing.kit, updates: existing.updates }
       : { name: cleanLine(github?.name ?? "", 80), email: cleanLine(github?.email ?? "", 200), company: "", role: "", teamSize: "", goals: [], agents: [], kit: "both", updates: false };
+    c.header("content-security-policy", WELCOME_CSP);
     return c.html(renderWelcome({ login: principal.login, values, errors: {}, editing: existing !== null, privacyUrl: PRIVACY_URL }));
   });
 
@@ -255,8 +258,10 @@ export function createApp(deps: AppDeps): Hono {
     if (await tooFast(principal.uid)) return c.html(renderMessage("Slow down", "Too many requests. Wait a minute and try again."), 429);
     const existing = await store.profile(principal.uid);
     const read = readWelcome(await c.req.parseBody({ all: true }));
-    const again = (status: 400 | 503, failure?: string) =>
-      c.html(renderWelcome({ login: principal.login, values: read.values, errors: read.errors, editing: existing !== null, privacyUrl: PRIVACY_URL, ...(failure ? { failure } : {}) }), status);
+    const again = (status: 400 | 503, failure?: string) => {
+      c.header("content-security-policy", WELCOME_CSP);
+      return c.html(renderWelcome({ login: principal.login, values: read.values, errors: read.errors, editing: existing !== null, privacyUrl: PRIVACY_URL, ...(failure ? { failure } : {}) }), status);
+    };
     if (!read.profile) return again(400);
     let profile: Awaited<ReturnType<typeof store.profile>>;
     try {
@@ -325,7 +330,7 @@ export function createApp(deps: AppDeps): Hono {
     c.header("cache-control", "no-store");
     return c.html(
       `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<meta name="color-scheme" content="dark"><link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Cdefs%3E%3ClinearGradient id='g' x1='0' y1='0' x2='1' y2='1'%3E%3Cstop offset='0' stop-color='#a6fad8'/%3E%3Cstop offset='.55' stop-color='#4fdfa8'/%3E%3Cstop offset='1' stop-color='#149b73'/%3E%3C/linearGradient%3E%3C/defs%3E%3Crect x='1' y='1' width='30' height='30' rx='9' fill='url%28#g%29'/%3E%3Cg stroke='#04261b' stroke-width='1.7' stroke-linecap='round' stroke-linejoin='round' fill='none'%3E%3Cpath d='M9.5 12.5 16 8.5 22.5 12.5 19.5 20.5 12.5 20.5Z'/%3E%3Cpath d='M9.5 12.5 16 15.5 22.5 12.5M16 8.5V15.5M12.5 20.5 16 15.5 19.5 20.5'/%3E%3C/g%3E%3Cg fill='#04261b'%3E%3Ccircle cx='9.5' cy='12.5' r='2.3'/%3E%3Ccircle cx='16' cy='8.5' r='2.3'/%3E%3Ccircle cx='22.5' cy='12.5' r='2.3'/%3E%3Ccircle cx='12.5' cy='20.5' r='2.3'/%3E%3Ccircle cx='19.5' cy='20.5' r='2.3'/%3E%3C/g%3E%3Ccircle cx='16' cy='15.5' r='3' fill='#fff' stroke='#04261b' stroke-width='1.7'/%3E%3C/svg%3E"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Geist:wght@300..700&family=Geist+Mono:wght@400;500&display=swap">
+<meta name="color-scheme" content="dark"><link rel="icon" href="${FAVICON}"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Geist:wght@300..700&family=Geist+Mono:wght@400;500&display=swap">
 <title>Company Brain</title></head><body style="margin:0;background:#08080a"><div id="root"></div><script type="module" src="/app/bundle.js"></script></body></html>`,
     );
   });

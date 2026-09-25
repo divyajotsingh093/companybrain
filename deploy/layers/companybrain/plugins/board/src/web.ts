@@ -1,6 +1,6 @@
 import type { AuditEntry, Board, BoardEvent, Post, TokenRow } from "./store.ts";
+import { FAVICON, mark } from "./brand.ts";
 import { swimlaneTpl, type SwimlaneEvent } from "./swimlane.ts";
-import { AGENT_CHOICES, GOALS, KITS, ROLES, TEAM_SIZES, type WelcomeInput, type WelcomeProblems } from "./starter.ts";
 import { AGENT_CLIENTS, type AgentClient } from "./token.ts";
 
 export function escapeHtml(value: string): string {
@@ -215,7 +215,7 @@ const STYLE = `
   @media (prefers-reduced-motion: reduce) { * { transition:none !important; } }
 `;
 
-const LOGO = `<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="6" cy="6" r="2.5"/><circle cx="18" cy="6" r="2.5"/><circle cx="12" cy="18" r="2.5"/><path d="M8.2 7.2 10.8 15.8M15.8 7.2 13.2 15.8M8.5 6h7"/></svg>`;
+const LOGO = mark(24);
 const GITHUB = `<svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 .5a11.5 11.5 0 0 0-3.64 22.41c.58.1.79-.25.79-.56v-2c-3.2.7-3.88-1.37-3.88-1.37-.52-1.33-1.28-1.69-1.28-1.69-1.04-.71.08-.7.08-.7 1.15.08 1.76 1.19 1.76 1.19 1.03 1.76 2.69 1.25 3.35.96.1-.75.4-1.25.73-1.54-2.55-.29-5.24-1.28-5.24-5.69 0-1.26.45-2.28 1.19-3.09-.12-.29-.52-1.46.11-3.05 0 0 .97-.31 3.17 1.18a11 11 0 0 1 5.78 0c2.2-1.49 3.17-1.18 3.17-1.18.63 1.59.23 2.76.11 3.05.74.81 1.19 1.83 1.19 3.09 0 4.42-2.69 5.4-5.25 5.68.41.36.78 1.06.78 2.14v3.17c0 .31.21.67.8.56A11.5 11.5 0 0 0 12 .5Z"/></svg>`;
 const CHECK = `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12.5 10 17.5 19 7"/></svg>`;
 
@@ -224,7 +224,7 @@ function page(title: string, content: string, opts: { signedIn?: boolean; width?
     ? `<a class="button quiet" href="/app">Open the app</a><a class="button quiet" href="/welcome">Profile</a><form method="post" action="/auth/logout"><button class="button quiet" type="submit">Sign out</button></form>`
     : "";
   return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>${escapeHtml(title)}</title><style>${STYLE}</style></head>
+<title>${escapeHtml(title)}</title><link rel="icon" href="${FAVICON}"><style>${STYLE}</style></head>
 <body><a class="skip" href="#main">Skip to content</a><header><div class="bar"><a class="brand" href="/">${LOGO}<span class="brand-name">Company Brain</span></a><span class="spacer"></span>${nav}</div></header>
 <main id="main" tabindex="-1"${opts.width ? ` class="${opts.width}"` : ""}>${content}</main></body></html>`;
 }
@@ -597,57 +597,5 @@ export function renderMessage(title: string, message: string): string {
   return page(
     `${title} · Company Brain`,
     `<div class="center"><div class="panel"><h1>${escapeHtml(title)}</h1><p class="muted">${escapeHtml(message)}</p><a class="button quiet" href="/">Back to home</a></div></div>`,
-  );
-}
-
-export function renderWelcome(opts: { login: string; values: WelcomeInput; errors: WelcomeProblems; editing: boolean; privacyUrl: string; failure?: string }): string {
-  const { values: v, errors: e } = opts;
-  const invalid = (k: keyof WelcomeProblems) => (e[k] ? ` aria-invalid="true" aria-describedby="${k}-error"` : "");
-  const err = (k: keyof WelcomeProblems) => (e[k] ? `<p class="field-error" id="${k}-error">${escapeHtml(e[k] as string)}</p>` : "");
-  const text = (id: keyof WelcomeProblems, label: string, type: string, value: string, extra: string) =>
-    `<div><label for="${id}">${label}</label><input type="${type}" class="plain" id="${id}" name="${id}" value="${escapeHtml(value)}" required${extra}${invalid(id)}>${err(id)}</div>`;
-  const option = (value: string, label: string, selected: string) => `<option value="${value}"${value === selected ? " selected" : ""}>${escapeHtml(label)}</option>`;
-  const pills = (name: string, type: "radio" | "checkbox", choices: Record<string, string>, chosen: string[]) =>
-    `<div class="choices">${Object.entries(choices)
-      .map(([value, label]) => `<label class="choice"><input type="${type}" name="${name}" value="${value}"${chosen.includes(value) ? " checked" : ""}${type === "radio" ? " required" : ""}>${escapeHtml(label)}</label>`)
-      .join("")}</div>`;
-  const summary = opts.failure
-    ? `<div class="notice error" role="alert">${escapeHtml(opts.failure)}</div>`
-    : Object.keys(e).length
-      ? `<div class="notice error" role="alert"><strong>Check the highlighted fields.</strong> ${Object.values(e).map((m) => escapeHtml(m as string)).join(" ")}</div>`
-      : "";
-  const kits = Object.entries(KITS)
-    .map(([value, k]) => `<label class="kit"><input type="radio" name="kit" value="${value}"${v.kit === value ? " checked" : ""} required><b>${escapeHtml(k.label)}</b><span>${escapeHtml(k.detail)}</span></label>`)
-    .join("");
-  const heading = opts.editing ? "Your profile" : "Welcome to Company Brain";
-  const lede = opts.editing
-    ? "Change what we know about you and your team. Choosing another kit adds its starter entries; nothing you wrote is changed."
-    : "Tell us about you and your team. We use it to fill your brain with a starter kit that fits, so it is useful from the first question instead of empty.";
-  return page(
-    `${heading} · Company Brain`,
-    `<h1>${heading}</h1>
-<p class="lede">${lede}</p>
-${summary}
-<form method="post" action="/welcome" class="welcome" novalidate>
-<div class="pair">
-${text("name", "Your name", "text", v.name, ` maxlength="80" autocomplete="name"`)}
-${text("email", "Work email", "email", v.email, ` maxlength="200" autocomplete="email" inputmode="email"`)}
-</div>
-<div class="pair">
-${text("company", "Company or team", "text", v.company, ` maxlength="100" autocomplete="organization"`)}
-<div><label for="role">Your role</label><select id="role" name="role" required${invalid("role")}><option value="">Choose one</option>${Object.entries(ROLES).map(([k, l]) => option(k, l, v.role)).join("")}</select>${err("role")}</div>
-</div>
-<fieldset${e.teamSize ? ' aria-describedby="teamSize-error"' : ""}><legend>How big is the team?</legend>${pills("teamSize", "radio", TEAM_SIZES, [v.teamSize])}${err("teamSize")}</fieldset>
-<fieldset><legend>What do you want it for?</legend><p class="hint">Pick any that apply. It shapes what we suggest first.</p>${pills("goals", "checkbox", GOALS, v.goals)}</fieldset>
-<fieldset><legend>Which AI agents do you use?</legend>${pills("agents", "checkbox", AGENT_CHOICES, v.agents)}</fieldset>
-<fieldset${e.kit ? ' aria-describedby="kit-error"' : ""}><legend>Starter kit</legend><p class="hint">Skills, rules, processes and ready-made agents to begin with. Edit or delete any of it later.</p><div class="kits">${kits}</div>${err("kit")}</fieldset>
-<label class="consent"><input type="checkbox" name="updates" value="yes"${v.updates ? " checked" : ""}>Email me occasional product updates.</label>
-<div class="row"><button class="button" type="submit">${opts.editing ? "Save profile" : "Set up my brain"}</button><p class="hint">Signed in as ${escapeHtml(opts.login)}. We keep this with your account and do not share it. <a href="${escapeHtml(opts.privacyUrl)}">Privacy</a></p></div>
-</form>${
-      opts.editing
-        ? ""
-        : `<div class="row" style="margin-top:18px"><form method="post" action="/auth/logout"><button class="button quiet" type="submit">Sign out</button></form><form method="post" action="/tokens/revoke-all"><button class="button quiet danger" type="submit">Revoke all tokens and sign out</button></form></div><p class="hint" style="margin-top:8px">Revoking deletes every agent token and the stored GitHub authorization. It cannot be undone.</p>`
-    }`,
-    { signedIn: opts.editing, width: "reading" },
   );
 }

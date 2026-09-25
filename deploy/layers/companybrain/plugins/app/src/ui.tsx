@@ -441,36 +441,29 @@ export function Tag({ children, style }: Common): JSX.Element {
   return <span style={{ display: "inline-flex", alignItems: "center", padding: "3px 10px", borderRadius: 999, fontSize: 11.5, color: PAL.textSecondary, background: "rgba(255,255,255,0.05)", boxShadow: "inset 0 0 0 1px rgba(255,255,255,0.07)", ...style }}>{children}</span>;
 }
 
+const MARK_DOTS: Array<[number, number, number]> = [
+  [56, 50, 2.5],
+  [56.43, 60.132, 3.1],
+  [42.336, 66.287, 3.7],
+  [26.189, 53.008, 4.3],
+  [30.877, 26.885, 4.9],
+  [61.125, 15.762, 5.5],
+  [44, 50, 2.5],
+  [43.57, 39.868, 3.1],
+  [57.664, 33.713, 3.7],
+  [73.811, 46.992, 4.3],
+  [69.123, 73.115, 4.9],
+  [38.875, 84.238, 5.5],
+];
+
 export function Logo({ size = 28 }: { size?: number }): JSX.Element {
-  const id = useId().replace(/:/g, "");
   return (
-    <svg width={size} height={size} viewBox="0 0 32 32" role="img" aria-label="Company Brain" style={{ flexShrink: 0, display: "block" }}>
-      <defs>
-        <linearGradient id={`${id}-fill`} x1="0" y1="0" x2="1" y2="1">
-          <stop offset="0" stopColor="#a6fad8" />
-          <stop offset="0.55" stopColor="#4fdfa8" />
-          <stop offset="1" stopColor="#149b73" />
-        </linearGradient>
-        <linearGradient id={`${id}-shine`} x1="0" y1="0" x2="0" y2="1">
-          <stop offset="0" stopColor="#ffffff" stopOpacity="0.55" />
-          <stop offset="0.5" stopColor="#ffffff" stopOpacity="0" />
-        </linearGradient>
-      </defs>
-      <rect x="1" y="1" width="30" height="30" rx="9" fill={`url(#${id}-fill)`} />
-      <rect x="1" y="1" width="30" height="30" rx="9" fill={`url(#${id}-shine)`} />
-      <rect x="1.5" y="1.5" width="29" height="29" rx="8.5" fill="none" stroke="#ffffff" strokeOpacity="0.35" />
-      <g stroke="#04261b" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" fill="none">
-        <path d="M9.5 12.5 16 8.5 22.5 12.5 19.5 20.5 12.5 20.5Z" />
-        <path d="M9.5 12.5 16 15.5 22.5 12.5M16 8.5V15.5M12.5 20.5 16 15.5 19.5 20.5" />
-      </g>
-      <g fill="#04261b">
-        <circle cx="9.5" cy="12.5" r="2.3" />
-        <circle cx="16" cy="8.5" r="2.3" />
-        <circle cx="22.5" cy="12.5" r="2.3" />
-        <circle cx="12.5" cy="20.5" r="2.3" />
-        <circle cx="19.5" cy="20.5" r="2.3" />
-      </g>
-      <circle cx="16" cy="15.5" r="3" fill="#ffffff" stroke="#04261b" strokeWidth="1.7" />
+    <svg width={size} height={size} viewBox="0 0 100 100" role="img" aria-label="Company Brain" style={{ flexShrink: 0, display: "block" }}>
+      <rect width="100" height="100" rx="23" fill="#16181c" />
+      <rect x="1" y="1" width="98" height="98" rx="22" fill="none" stroke="#ffffff" strokeOpacity="0.14" strokeWidth="2" />
+      {MARK_DOTS.map(([cx, cy, r], i) => (
+        <circle key={i} cx={cx} cy={cy} r={r} fill={i === 5 || i === 11 ? "#0fae93" : "#f8f7f2"} />
+      ))}
     </svg>
   );
 }
