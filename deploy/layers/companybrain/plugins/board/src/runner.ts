@@ -28,7 +28,11 @@ export const CREATE_WRITES: ReadonlySet<string> = new Set(["brain_write", "memor
 
 export type Gate = (tool: string, args: Record<string, unknown>, readOnly: boolean) => Promise<string | null>;
 
-type Action = { thought: string; tool: string; arguments: Record<string, unknown> } | { thought: string; final: string } | { thought: string; invalid: true };
+type Action =
+  | { thought: string; tool: string; arguments: Record<string, unknown> }
+  | { thought: string; final: string }
+  | { thought: string; invalid: true }
+  | { thought: string; prose: string };
 
 const PROTOCOL = [
   "Work in steps. Reply with exactly one JSON object and nothing else.",
@@ -81,7 +85,7 @@ export function parseAction(reply: string): Action {
   const native = nativeCall(text);
   if (native) return native;
   const looksLikeCall = /<tool_call|<function=|<\|tool_call/.test(text);
-  if (!text.includes("{")) return looksLikeCall ? { thought: "", invalid: true } : { thought: "", final: text };
+  if (!text.includes("{")) return looksLikeCall ? { thought: "", invalid: true } : { thought: "", prose: text };
   for (let start = text.indexOf("{"), tries = 0; start >= 0 && tries < 20; start = text.indexOf("{", start + 1), tries++) {
     for (let end = text.lastIndexOf("}"); end > start; end = text.lastIndexOf("}", end - 1)) {
       let parsed: unknown;
@@ -96,7 +100,7 @@ export function parseAction(reply: string): Action {
       }
     }
   }
-  return { thought: "", invalid: true };
+  return looksLikeCall || text.trimStart().startsWith("{") ? { thought: "", invalid: true } : { thought: "", prose: text };
 }
 
 function recent(history: string[]): string {
@@ -143,6 +147,7 @@ export async function runAgent(opts: {
   const fence = createFence();
   const history: string[] = [];
   const changes: string[] = [];
+  let reminded = false;
   const limit = opts.maxSteps ?? profile.maxSteps ?? MAX_STEPS;
   const ledger = (): string =>
     changes.length ? `\n\nChanges this run made:\n${changes.map((c) => `- ${c}`).join("\n")}` : "\n\nThis run made no changes.";
@@ -158,6 +163,18 @@ export async function runAgent(opts: {
     ].join("\n\n");
     const action = parseAction(await opts.model(prompt, { maxTokens: RUN_MAX_TOKENS, ...(opts.signal ? { signal: opts.signal } : {}) }));
     if (action.thought) await record({ kind: "thought", text: clamp(cleanLine(action.thought, 600), STEP_TEXT) });
+    if ("prose" in action && !reminded && !last) {
+      reminded = true;
+      await record({ kind: "error", text: "The model replied in prose instead of JSON, so the agent was asked again." });
+      history.push(`Step ${step + 1}: you replied in prose, not with a JSON object. Do not think out loud. Reply with exactly one JSON object: a tool call, or a final answer.`);
+      continue;
+    }
+    if ("prose" in action) {
+      const answer = clamp(action.prose.trim() || "The agent finished without a summary.", 6_000) + ledger();
+      await record({ kind: "final", text: answer });
+      return { status: "done", answer };
+    }
+    reminded = false;
     if ("invalid" in action) {
       await record({ kind: "error", text: "The model's reply was not valid JSON, so the agent was asked again." });
       history.push(`Step ${step + 1}: your reply was not a valid JSON object. Reply with exactly one JSON object. Keep bodies short so the reply is not cut off.`);

@@ -133,8 +133,9 @@ test("replies are read leniently, whatever shape a free model answers in", () =>
   assert.deepEqual(parseAction('<think>hmm</think>{"tool":"whoami","arguments":{}}'), { thought: "", tool: "whoami", arguments: {} });
   assert.deepEqual(parseAction('Here you go: {"thought":"x","final":"done"} hope that helps {'), { thought: "x", final: "done" });
   assert.deepEqual(parseAction('{"tool":"brain_search","arguments":[1]}'), { thought: "", tool: "brain_search", arguments: {} });
-  assert.deepEqual(parseAction("Plain prose answer."), { thought: "", final: "Plain prose answer." });
+  assert.deepEqual(parseAction("Plain prose answer."), { thought: "", prose: "Plain prose answer." });
   assert.deepEqual(parseAction('I will {maybe} do this: {"tool":"whoami","arguments":{}}'), { thought: "", tool: "whoami", arguments: {} });
+  assert.deepEqual(parseAction("We are at step 12. Let's recall what we did {so far}."), { thought: "", prose: "We are at step 12. Let's recall what we did {so far}." });
   assert.deepEqual(parseAction('{"tool": "brain_write", "arguments": {"body": "cut off'), { thought: "", invalid: true });
   assert.deepEqual(
     parseAction("<tool_call>get_file\n<arg_key>repo</arg_key>\n<arg_value>acme/app</arg_value><arg_key>path</arg_key>\n<arg_value>docs/release.md</arg_value>\n</tool_call>"),
@@ -181,4 +182,11 @@ test("one run at a time per person, runs are audited like connected agents, and 
   env.h.clock.now += 2 * 3_600_000;
   await env.h.store.purge();
   assert.equal(await env.h.store.hit("runs:1", 86_400_000), 5, "a busy refusal costs nothing, and a day-long limit is not wiped by the hourly purge");
+});
+
+test("a model thinking out loud is asked again before its prose is taken as the answer", async () => {
+  const env = await harness(["We are at step 1. Let's recall what we have done.", '{"final": "Done properly."}']);
+  const run = await runOnce(env, { agent: "assistant", goal: "Do a thing." });
+  assert.equal(run.answer, "Done properly.\n\nThis run made no changes.");
+  assert.equal(run.steps[0]?.kind, "error");
 });
