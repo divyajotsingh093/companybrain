@@ -5,6 +5,8 @@ import { AskScreen, type Turn } from "./ask";
 import { GraphScreen } from "./graph";
 import { FilesSection, UPLOADS } from "./files";
 import { GatewayScreen } from "./gateway";
+import { RunScreen } from "./run";
+import { LearnScreen } from "./learn";
 import { Shell } from "./shell";
 import { HomeScreen, type Destination } from "./home";
 import { MemoryScreen, type MemoryEntry } from "./memory";
@@ -121,7 +123,7 @@ interface Indexed {
   message?: string;
 }
 
-type Screen = "home" | "ask" | "graph" | "overview" | "work" | "sources" | "agents" | "gateway" | "decisions" | EntryKind;
+type Screen = "home" | "learn" | "ask" | "graph" | "overview" | "work" | "sources" | "agents" | "run" | "build" | "gateway" | "decisions" | EntryKind;
 
 const KIND_LABEL: Record<EntryKind, string> = {
   project: "Projects",
@@ -179,23 +181,26 @@ function connections(body: string): string[] {
 
 const SCREEN_LABEL: Record<Screen, string> = {
   home: "Home",
+  learn: "Learn",
   ask: "Ask",
   graph: "Graph",
   overview: "Overview",
   work: "Requests",
   sources: "Sources",
   agents: "Agents",
+  run: "Run agents",
+  build: "Auto-build",
   gateway: "Gateway",
   decisions: "Decisions",
   ...KIND_LABEL,
 };
 
 const NAV_GROUPS: Array<{ group: string | null; items: Screen[] }> = [
-  { group: null, items: ["home", "ask", "graph", "overview"] },
+  { group: null, items: ["home", "learn", "ask", "graph", "overview"] },
   { group: "Work", items: ["work", "project", "sources"] },
   { group: "Knowledge", items: ["memory", "record", "lesson"] },
   { group: "Operating", items: ["process", "rule", "role"] },
-  { group: "Build", items: ["skill", "agents", "gateway"] },
+  { group: "Build", items: ["skill", "agents", "run", "build", "gateway"] },
   { group: "Judgment", items: ["decisions"] },
 ];
 
@@ -1058,6 +1063,8 @@ export function App(): JSX.Element {
     if (screen === "overview") return <Overview me={me} onOpen={openRepo} />;
     if (screen === "agents") return <AgentsScreen me={me} />;
     if (screen === "gateway") return <GatewayScreen />;
+    if (screen === "run" || screen === "build") return <RunScreen key={screen} mode={screen} />;
+    if (screen === "learn") return <LearnScreen onNavigate={(next) => select((Object.hasOwn(SCREEN_LABEL, next) ? next : "home") as Screen)} />;
     if (screen === "work") {
       if (workError) {
         return (
