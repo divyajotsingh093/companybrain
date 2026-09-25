@@ -103,8 +103,8 @@ they want their agents to see; organisation repositories need the app installed 
 | `BOARD_REQUESTS_PER_MINUTE` | Request limit per user, shared across that user's tokens |
 | `PORT` | Listen port, default 8787 |
 | `OPENROUTER_API_KEY` | When set, questions are answered through OpenRouter first |
-| `OPENROUTER_MODEL` | OpenRouter model, default `openrouter/free`, which routes to a free model |
-| `OPENROUTER_FALLBACK_MODELS` | Comma-separated models tried next, default `qwen/qwen3.8-27b:free,google/gemma-4-31b-it:free`; empty for none |
+| `OPENROUTER_MODEL` | OpenRouter model, default `google/gemma-4-31b-it:free` |
+| `OPENROUTER_FALLBACK_MODELS` | Comma-separated models tried next, default `nvidia/nemotron-3-super-120b-a12b:free,qwen/qwen3.8-27b:free`; empty for none. Named models, because `openrouter/free` can route to a content-safety classifier |
 | `AI_GATEWAY_API_KEY` | Vercel AI Gateway key; on Vercel the project's OIDC identity is used when unset |
 | `AI_GATEWAY_MODEL` | Gateway model, default `anthropic/claude-sonnet-5` |
 | `AI_GATEWAY_FALLBACK_MODEL` | Gateway model tried only when the main one is refused with 403, as on the free tier; default `openai/gpt-4.1-mini` |

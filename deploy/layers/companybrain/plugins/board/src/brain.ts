@@ -181,8 +181,8 @@ export function readHistory(raw: unknown): Turn[] {
 const OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions";
 const GATEWAY_URL = "https://ai-gateway.vercel.sh/v1/chat/completions";
 const DEFAULT_MODEL = "anthropic/claude-sonnet-5";
-const OPENROUTER_FREE_MODEL = "openrouter/free";
-const OPENROUTER_FREE_FALLBACKS = "qwen/qwen3.8-27b:free,google/gemma-4-31b-it:free";
+const OPENROUTER_FREE_MODEL = "google/gemma-4-31b-it:free";
+const OPENROUTER_FREE_FALLBACKS = "nvidia/nemotron-3-super-120b-a12b:free,qwen/qwen3.8-27b:free";
 const FREE_TIER_MODEL = "openai/gpt-4.1-mini";
 const ANSWER_DEADLINE_MS = 90_000;
 const HOPELESS = new Set([400, 413, 422]);

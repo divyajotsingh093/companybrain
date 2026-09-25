@@ -173,15 +173,15 @@ test("models are tried in order: OpenRouter, then the AI Gateway, then a model t
   assert.equal(modelSummary({}), null);
 
   const env = { OPENROUTER_API_KEY: "or-key", VERCEL: "1", PUBLIC_URL: "https://board.test" };
-  assert.deepEqual(modelSummary(env), { model: "openrouter/free", provider: "OpenRouter", fallback: "qwen/qwen3.8-27b:free" });
+  assert.deepEqual(modelSummary(env), { model: "google/gemma-4-31b-it:free", provider: "OpenRouter", fallback: "nvidia/nemotron-3-super-120b-a12b:free" });
   assert.deepEqual(modelSummary({ VERCEL: "1" }), { model: "anthropic/claude-sonnet-5", provider: "Vercel AI Gateway", fallback: "openai/gpt-4.1-mini" });
 
-  assert.deepEqual(await run(createModel(env, fetchWith(() => reply(200)), async () => "oidc")), { text: "ok", by: { model: "openrouter/free", fallback: false } });
-  assert.deepEqual(calls, [{ url: "https://openrouter.ai/api/v1/chat/completions", auth: "Bearer or-key", model: "openrouter/free", title: "Company Brain" }]);
+  assert.deepEqual(await run(createModel(env, fetchWith(() => reply(200)), async () => "oidc")), { text: "ok", by: { model: "google/gemma-4-31b-it:free", fallback: false } });
+  assert.deepEqual(calls, [{ url: "https://openrouter.ai/api/v1/chat/completions", auth: "Bearer or-key", model: "google/gemma-4-31b-it:free", title: "Company Brain" }]);
 
   calls.length = 0;
-  const busy = await run(createModel(env, fetchWith((_url, model) => (model === "openrouter/free" ? reply(429) : reply(200, "from a named free model"))), async () => "oidc"));
-  assert.deepEqual(busy, { text: "from a named free model", by: { model: "qwen/qwen3.8-27b:free", fallback: true } }, "a rate-limited free router falls through to a named free model");
+  const busy = await run(createModel(env, fetchWith((_url, model) => (model === "google/gemma-4-31b-it:free" ? reply(429) : reply(200, "from a named free model"))), async () => "oidc"));
+  assert.deepEqual(busy, { text: "from a named free model", by: { model: "nvidia/nemotron-3-super-120b-a12b:free", fallback: true } }, "a rate-limited free model falls through to the next free model");
 
   const paid = { ...env, OPENROUTER_MODEL: "anthropic/claude-sonnet-5", OPENROUTER_FALLBACK_MODELS: "" };
   assert.deepEqual(modelSummary(paid), { model: "anthropic/claude-sonnet-5", provider: "OpenRouter", fallback: "anthropic/claude-sonnet-5" });
@@ -190,9 +190,9 @@ test("models are tried in order: OpenRouter, then the AI Gateway, then a model t
   const outage = await run(createModel(env, fetchWith((url) => (url.includes("openrouter") ? reply(502) : reply(200, "from the gateway"))), async () => "oidc-token"));
   assert.deepEqual(outage, { text: "from the gateway", by: { model: "anthropic/claude-sonnet-5", fallback: true } });
   assert.deepEqual(calls.map((c) => [c.url.includes("openrouter") ? "openrouter" : "gateway", c.model, c.auth]), [
-    ["openrouter", "openrouter/free", "Bearer or-key"],
-    ["openrouter", "qwen/qwen3.8-27b:free", "Bearer or-key"],
     ["openrouter", "google/gemma-4-31b-it:free", "Bearer or-key"],
+    ["openrouter", "nvidia/nemotron-3-super-120b-a12b:free", "Bearer or-key"],
+    ["openrouter", "qwen/qwen3.8-27b:free", "Bearer or-key"],
     ["gateway", "anthropic/claude-sonnet-5", "Bearer oidc-token"],
   ], "a 502 is not a 403, so the free-tier model is not tried");
 
@@ -203,7 +203,7 @@ test("models are tried in order: OpenRouter, then the AI Gateway, then a model t
 
   calls.length = 0;
   await assert.rejects(() => createModel(env, fetchWith(() => reply(400)), async () => "t")!("hi"), /model_unavailable_400_400$/);
-  assert.deepEqual(calls.map((c) => c.model), ["openrouter/free", "anthropic/claude-sonnet-5"], "a refused request is tried once per provider, so a small free model cannot block the gateway");
+  assert.deepEqual(calls.map((c) => c.model), ["google/gemma-4-31b-it:free", "anthropic/claude-sonnet-5"], "a refused request is tried once per provider, so a small free model cannot block the gateway");
 
   calls.length = 0;
   let oidcCalls = 0;
