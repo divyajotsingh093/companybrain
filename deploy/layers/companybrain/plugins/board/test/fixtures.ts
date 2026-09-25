@@ -155,7 +155,7 @@ export async function memoryDatabase(): Promise<Database> {
   return { ...wrap(pg), transaction: (run) => pg.transaction((tx) => run(wrap(tx))), close: () => pg.close() };
 }
 
-export async function buildApp(overrides: Partial<Config> = {}, extra: { model?: Model; gatewayFetch?: typeof fetch } = {}): Promise<Harness> {
+export async function buildApp(overrides: Partial<Config> = {}, extra: { model?: Model; gatewayFetch?: typeof fetch; defer?: (work: Promise<unknown>) => void } = {}): Promise<Harness> {
   const clock = { now: 1_800_000_000_000 };
   const now = () => clock.now;
   const config = testConfig(overrides);

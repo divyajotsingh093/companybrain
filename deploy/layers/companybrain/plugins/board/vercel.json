@@ -8,6 +8,10 @@
     {
       "path": "/cron/reindex",
       "schedule": "37 5 * * *"
+    },
+    {
+      "path": "/cron/build",
+      "schedule": "47 6 * * *"
     }
   ]
 }

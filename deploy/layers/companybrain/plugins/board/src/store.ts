@@ -17,6 +17,7 @@ export const ACTIVE_AGENT_TOKENS_PER_USER = 20;
 export const MAX_POSTS_PER_REPO = 5_000;
 const RETAIN_POSTS_MS = 180 * 24 * 3_600_000;
 const RETAIN_AUDIT_MS = 30 * 24 * 3_600_000;
+const RETAIN_RUNS_MS = 7 * 24 * 3_600_000;
 const RETAIN_SUGGESTIONS_MS = 180 * 24 * 3_600_000;
 const EXPIRING_SOON_MS = 30 * 60_000;
 export const MAX_AUDIT_PER_USER = 2_000;
@@ -232,6 +233,32 @@ export interface GatewayOAuthRows {
   read(): Promise<GatewayOAuthRow | undefined>;
   save(url: string, sealed: string): Promise<void>;
 }
+
+export type RunStatus = "running" | "done" | "stopped" | "failed";
+
+export interface RunStep {
+  at: number;
+  kind: "thought" | "call" | "result" | "blocked" | "final" | "error";
+  text: string;
+  tool?: string;
+  ok?: boolean;
+}
+
+export interface AgentRun {
+  id: string;
+  uid: number;
+  agent: string;
+  goal: string;
+  status: RunStatus;
+  steps: RunStep[];
+  answer: string | null;
+  allowActions: boolean;
+  createdAt: number;
+  updatedAt: number;
+  calls?: number;
+}
+
+export const RUN_STALE_MS = 6 * 60_000;
 
 export type PutEntryResult =
   | { ok: true; entry: Entry; created: boolean }
@@ -594,6 +621,27 @@ const SCHEMA = `
     asked_at BIGINT,
     updates_at BIGINT
   );
+  ALTER TABLE rate_limits ADD COLUMN IF NOT EXISTS window_ms BIGINT NOT NULL DEFAULT 3600000;
+  CREATE TABLE IF NOT EXISTS agent_runs (
+    id TEXT PRIMARY KEY,
+    uid BIGINT NOT NULL,
+    agent TEXT NOT NULL,
+    goal TEXT NOT NULL,
+    status TEXT NOT NULL,
+    steps JSONB NOT NULL DEFAULT '[]'::jsonb,
+    answer TEXT,
+    allow_actions BOOLEAN NOT NULL,
+    created_at BIGINT NOT NULL,
+    updated_at BIGINT NOT NULL
+  );
+  CREATE INDEX IF NOT EXISTS agent_runs_uid ON agent_runs (uid, created_at);
+  UPDATE agent_runs SET status = 'stopped', answer = 'The server restarted before this run finished.' WHERE status = 'running';
+  CREATE UNIQUE INDEX IF NOT EXISTS agent_runs_one_running ON agent_runs (uid) WHERE status = 'running';
+  CREATE TABLE IF NOT EXISTS brain_settings (
+    uid BIGINT PRIMARY KEY,
+    auto_build BOOLEAN NOT NULL,
+    built_at BIGINT
+  );
 `;
 
 const WIKI_LINK = /\[\[([^\]\n]{1,120})\]\]/g;
@@ -659,7 +707,7 @@ export function openStore(db: Database, now: () => number = Date.now) {
       .transaction(async (tx) => {
         await tx.query(`SET LOCAL lock_timeout = '10s'`);
         const current = async () =>
-          (await tx.query<{ ok: boolean }>(`SELECT to_regclass('rate_limits') IS NOT NULL AND to_regclass('posts_open') IS NOT NULL AND to_regclass('audit_log_at') IS NOT NULL AND to_regclass('board_events_repo_id') IS NOT NULL AND to_regclass('entries_listing') IS NOT NULL AND to_regclass('posts_open_decisions') IS NOT NULL AND to_regclass('documents_search_v2') IS NOT NULL AND to_regclass('entries_search') IS NOT NULL AND to_regclass('links_incoming') IS NOT NULL AND to_regclass('work_updates_task') IS NOT NULL AND to_regclass('gateway_servers') IS NOT NULL AND to_regclass('suggestion_events_uid') IS NOT NULL AND to_regclass('profiles') IS NOT NULL AND to_regclass('gateway_oauth_state') IS NOT NULL AS ok`)).rows[0]?.ok;
+          (await tx.query<{ ok: boolean }>(`SELECT to_regclass('rate_limits') IS NOT NULL AND to_regclass('posts_open') IS NOT NULL AND to_regclass('audit_log_at') IS NOT NULL AND to_regclass('board_events_repo_id') IS NOT NULL AND to_regclass('entries_listing') IS NOT NULL AND to_regclass('posts_open_decisions') IS NOT NULL AND to_regclass('documents_search_v2') IS NOT NULL AND to_regclass('entries_search') IS NOT NULL AND to_regclass('links_incoming') IS NOT NULL AND to_regclass('work_updates_task') IS NOT NULL AND to_regclass('gateway_servers') IS NOT NULL AND to_regclass('suggestion_events_uid') IS NOT NULL AND to_regclass('profiles') IS NOT NULL AND to_regclass('gateway_oauth_state') IS NOT NULL AND to_regclass('agent_runs_uid') IS NOT NULL AND to_regclass('brain_settings') IS NOT NULL AND to_regclass('agent_runs_one_running') IS NOT NULL AS ok`)).rows[0]?.ok;
         if (await current()) return;
         await lock(tx, "companybrain-board:schema");
         if (await current()) return;
@@ -1016,6 +1064,8 @@ export function openStore(db: Database, now: () => number = Date.now) {
       await tx.query(`DELETE FROM audit_log WHERE uid = $1`, [uid]);
       await tx.query(`DELETE FROM gateway_servers WHERE owner_uid = $1`, [uid]);
       await tx.query(`DELETE FROM gateway_oauth WHERE owner_uid = $1`, [uid]);
+      await tx.query(`DELETE FROM agent_runs WHERE uid = $1`, [uid]);
+      await tx.query(`DELETE FROM brain_settings WHERE uid = $1`, [uid]);
       await tx.query(`DELETE FROM suggestion_events WHERE uid = $1`, [uid]);
       await tx.query(`DELETE FROM profiles WHERE uid = $1`, [uid]);
     });
@@ -1024,8 +1074,9 @@ export function openStore(db: Database, now: () => number = Date.now) {
   async function hit(key: string, windowMs: number): Promise<number> {
     const t = now();
     const row = await first<{ hits: number }>(
-      `INSERT INTO rate_limits (key, window_start, hits) VALUES ($1, $2, 1)
+      `INSERT INTO rate_limits (key, window_start, hits, window_ms) VALUES ($1, $2, 1, $3)
        ON CONFLICT (key) DO UPDATE SET
+         window_ms = $3,
          window_start = CASE WHEN $2 - rate_limits.window_start >= $3 THEN $2 ELSE rate_limits.window_start END,
          hits = CASE WHEN $2 - rate_limits.window_start >= $3 THEN 1 ELSE rate_limits.hits + 1 END
        RETURNING hits`,
@@ -1528,6 +1579,80 @@ export function openStore(db: Database, now: () => number = Date.now) {
     });
   }
 
+  const RUN_COLUMNS = `id, uid, agent, goal, status, steps, answer, allow_actions AS "allowActions", created_at AS "createdAt", updated_at AS "updatedAt"`;
+  const toRun = (r: AgentRun & { steps: RunStep[] | string }): AgentRun => ({ ...r, steps: typeof r.steps === "string" ? (JSON.parse(r.steps) as RunStep[]) : r.steps });
+
+  async function createRun(run: { id: string; uid: number; agent: string; goal: string; allowActions: boolean }): Promise<boolean> {
+    const t = now();
+    await settleStaleRuns(run.uid);
+    return (await changed(
+      `INSERT INTO agent_runs (id, uid, agent, goal, status, allow_actions, created_at, updated_at)
+       VALUES ($1, $2, $3, $4, 'running', $5, $6, $6) ON CONFLICT (uid) WHERE status = 'running' DO NOTHING`,
+      [
+      run.id,
+      run.uid,
+      run.agent,
+      run.goal,
+      run.allowActions ? "true" : "false",
+      t,
+    ])) > 0;
+  }
+
+  async function addRunStep(id: string, step: RunStep): Promise<void> {
+    await changed(`UPDATE agent_runs SET steps = steps || $2::jsonb, updated_at = $3 WHERE id = $1 AND status = 'running'`, [id, JSON.stringify([step]), now()]);
+  }
+
+  async function finishRun(id: string, status: Exclude<RunStatus, "running">, answer: string | null): Promise<void> {
+    await changed(`UPDATE agent_runs SET status = $2, answer = $3, updated_at = $4 WHERE id = $1 AND status = 'running'`, [id, status, answer, now()]);
+  }
+
+  async function settleStaleRuns(uid: number): Promise<void> {
+    await changed(`UPDATE agent_runs SET status = 'stopped', answer = 'The server stopped before this run finished.', updated_at = $2 WHERE uid = $1 AND status = 'running' AND updated_at < $3`, [uid, now(), now() - RUN_STALE_MS]);
+  }
+
+  async function listRuns(uid: number, limit: number, agent?: string): Promise<AgentRun[]> {
+    await settleStaleRuns(uid);
+    const list = await rows<AgentRun & { steps: RunStep[] | string }>(
+      `SELECT ${RUN_COLUMNS.replace("steps,", "")}, (SELECT COUNT(*) FROM jsonb_array_elements(steps) e WHERE e->>'kind' = 'call')::int AS calls FROM agent_runs WHERE uid = $1 AND ($3::text IS NULL OR agent = $3) ORDER BY created_at DESC LIMIT $2`,
+      [uid, limit, agent ?? null],
+    );
+    return list.map((r) => ({ ...r, steps: [] }));
+  }
+
+  async function getRun(uid: number, id: string): Promise<AgentRun | undefined> {
+    await settleStaleRuns(uid);
+    const row = await first<AgentRun & { steps: RunStep[] | string }>(`SELECT ${RUN_COLUMNS} FROM agent_runs WHERE uid = $1 AND id = $2`, [uid, id]);
+    return row ? toRun(row) : undefined;
+  }
+
+  async function brainSettings(uid: number): Promise<{ autoBuild: boolean; builtAt: number | null }> {
+    const row = await first<{ autoBuild: boolean; builtAt: number | null }>(`SELECT auto_build AS "autoBuild", built_at AS "builtAt" FROM brain_settings WHERE uid = $1`, [uid]);
+    return row ?? { autoBuild: false, builtAt: null };
+  }
+
+  async function setAutoBuild(uid: number, on: boolean): Promise<void> {
+    await changed(`INSERT INTO brain_settings (uid, auto_build) VALUES ($1, $2) ON CONFLICT (uid) DO UPDATE SET auto_build = EXCLUDED.auto_build`, [uid, on ? "true" : "false"]);
+  }
+
+  async function hasRunningRun(uid: number): Promise<boolean> {
+    await settleStaleRuns(uid);
+    return Boolean(await first(`SELECT 1 FROM agent_runs WHERE uid = $1 AND status = 'running'`, [uid]));
+  }
+
+  async function releaseAutoBuild(uid: number): Promise<void> {
+    await changed(`UPDATE brain_settings SET built_at = NULL WHERE uid = $1`, [uid]);
+  }
+
+  async function claimAutoBuilds(before: number, limit: number): Promise<number[]> {
+    const claimed = await rows<{ uid: number }>(
+      `UPDATE brain_settings SET built_at = $1 WHERE uid IN (
+         SELECT uid FROM brain_settings WHERE auto_build AND (built_at IS NULL OR built_at < $2) ORDER BY built_at NULLS FIRST LIMIT $3
+       ) RETURNING uid`,
+      [now(), before, limit],
+    );
+    return claimed.map((r) => r.uid);
+  }
+
   const OAUTH_COLUMNS = `owner_uid AS "ownerUid", name, url, state, sealed, created_at AS "createdAt"`;
 
   async function gatewayOAuth(ownerUid: number, name: string): Promise<GatewayOAuthRow | undefined> {
@@ -1603,7 +1728,8 @@ export function openStore(db: Database, now: () => number = Date.now) {
       [MAX_POSTS_PER_REPO],
     );
     const tokens = await changed(`DELETE FROM tokens WHERE revoked_at < $1 OR expires_at < $1`, [cutoff]);
-    await changed(`DELETE FROM rate_limits WHERE window_start < $1`, [t - HOUR_MS]);
+    await changed(`DELETE FROM rate_limits WHERE window_start + GREATEST(window_ms, $2) < $1`, [t, HOUR_MS]);
+    await changed(`DELETE FROM agent_runs WHERE created_at < $1`, [t - RETAIN_RUNS_MS]);
     await changed(
       `DELETE FROM gateway_oauth o WHERE o.created_at < $1 AND NOT EXISTS (SELECT 1 FROM gateway_servers g WHERE g.owner_uid = o.owner_uid AND g.name = o.name)`,
       [t - HOUR_MS],
@@ -1641,6 +1767,16 @@ export function openStore(db: Database, now: () => number = Date.now) {
     deleteGateway,
     gatewayOAuth,
     claimGatewayOAuth,
+    createRun,
+    addRunStep,
+    finishRun,
+    listRuns,
+    getRun,
+    brainSettings,
+    setAutoBuild,
+    claimAutoBuilds,
+    releaseAutoBuild,
+    hasRunningRun,
     withGatewayOAuthLock,
     startGatewayOAuth,
     saveGatewayOAuth,

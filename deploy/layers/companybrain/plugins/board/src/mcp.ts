@@ -529,6 +529,7 @@ export function createBoardServer(deps: BoardDeps): McpServer {
         kind: z.enum(ENTRY_KINDS),
         name: z.string().min(1).max(MAX_ENTRY_NAME).optional(),
       },
+      annotations: { readOnlyHint: true },
     },
     ({ kind, name }) =>
       guard(async () => {

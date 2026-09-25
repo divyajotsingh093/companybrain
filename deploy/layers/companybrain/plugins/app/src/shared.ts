@@ -6,6 +6,7 @@ export const EASE = "cubic-bezier(0.23, 1, 0.32, 1)";
 
 export const ERROR_COPY: Record<string, string> = {
   already_answered: "That was already answered somewhere else. Reloading it now.",
+  busy: "An agent is already running. Wait for it to finish, then start the next one.",
   sign_in: "Your session expired. Reload to sign in again.",
   entry_quota: "You have reached the limit for this kind. Remove one first.",
   empty_name: "That name is empty once cleaned up. Try plain text.",

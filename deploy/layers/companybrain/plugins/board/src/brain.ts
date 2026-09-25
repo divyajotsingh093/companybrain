@@ -110,6 +110,7 @@ export async function indexRepo(github: GitHubClient, repo: string): Promise<Ind
 }
 
 export interface ModelOptions {
+  maxTokens?: number;
   signal?: AbortSignal;
   onModel?: (model: string, fallback: boolean) => void;
 }
@@ -272,7 +273,7 @@ export function createModel(env: NodeJS.ProcessEnv, fetchImpl: typeof fetch = fe
         const res = await fetchImpl(p.url, {
           method: "POST",
           headers: { authorization: `Bearer ${token}`, "content-type": "application/json", ...p.headers },
-          body: JSON.stringify({ model: p.model, max_tokens: 900, messages: [{ role: "user", content: prompt }] }),
+          body: JSON.stringify({ model: p.model, max_tokens: opts.maxTokens ?? 900, messages: [{ role: "user", content: prompt }] }),
           signal: AbortSignal.any([deadline, AbortSignal.timeout(attemptMs)]),
         });
         previous = res.status;

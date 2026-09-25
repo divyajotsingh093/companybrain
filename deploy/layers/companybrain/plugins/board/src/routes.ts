@@ -1,4 +1,7 @@
+import { Client } from "@modelcontextprotocol/sdk/client/index.js";
+import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js";
+import { waitUntil } from "@vercel/functions";
 import { type Context, Hono } from "hono";
 import { bodyLimit } from "hono/body-limit";
 import { cors } from "hono/cors";
@@ -19,12 +22,13 @@ import { FAVICON } from "./brand.ts";
 import { createBoardServer, describeError, TOOL_NAMES } from "./mcp.ts";
 import { AUTHORIZE_PATH, CODE_TTL_MS, formActionFor, MAX_NEXT_LENGTH, issueCode, metadata, NEXT_TTL_MS, readClient, redeemCode, redirectAllowed, registerClient, resourceAllowed, validChallenge, withParams } from "./oauth.ts";
 import { forgetReference, quietly, seedHarnessSkill, seedPerson, seedProject, seedReference } from "./seed.ts";
-import { AGREEMENT, agentCards, HANDBOOK, packsOf, readWelcome, seedStarterKit, type WelcomeInput } from "./starter.ts";
+import { AGREEMENT, agentCards, agentsFor, HANDBOOK, packsOf, readWelcome, seedStarterKit, type WelcomeInput } from "./starter.ts";
+import { type AgentProfile, CREATE_WRITES, LIBRARIAN, LIBRARIAN_GOAL, MAX_STEPS, profilesFor, RUN_DEADLINE_MS, runAgent } from "./runner.ts";
 import { isMemoryType, MEMORY_PURPOSE, parseMemory, renderMemory } from "./memory.ts";
 import { learnInto, PART_PURPOSE, parseSkill, pulse, renderSkill, SKILL_PARTS, STALE_AFTER_MS } from "./skills.ts";
 import { candidates, rank, type Signals } from "./suggest.ts";
 import { cleanLine, cleanText } from "./untrusted.ts";
-import { ACTIVE_AGENT_TOKENS_PER_USER, ENTRY_KINDS, type GatewayOAuthRows, KIND_PURPOSE, MAX_DOC_BODY, MAX_ENTRY_BODY, MAX_ENTRY_NAME, MAX_UPLOAD_NAME, type Store } from "./store.ts";
+import { ACTIVE_AGENT_TOKENS_PER_USER, ENTRY_KINDS, type EntryKind, type GatewayOAuthRows, type RunStep, KIND_PURPOSE, MAX_DOC_BODY, MAX_ENTRY_BODY, MAX_ENTRY_NAME, MAX_UPLOAD_NAME, type Store } from "./store.ts";
 import { hashToken, isAgentClient, seal, unseal } from "./token.ts";
 import { type ErrorCode, isErrorCode, renderBoard, renderConnected, renderDenied, renderHome, renderConsent, renderMessage, renderTokenCreated } from "./web.ts";
 import { renderWelcome, WELCOME_CSP } from "./welcome.ts";
@@ -40,7 +44,13 @@ export interface AppDeps {
   fetch?: Fetch;
   gatewayFetch?: typeof fetch;
   now?: () => number;
+  defer?: (work: Promise<unknown>) => void;
 }
+
+const RUNS_PER_DAY = 30;
+const AUTO_BUILD_EVERY_MS = 20 * 3_600_000;
+const AUTO_BUILDS_PER_CRON = 10;
+const MAX_GOAL = 2_000;
 
 const SESSION_COOKIE = "cb_session";
 const STATE_COOKIE = "cb_state";
@@ -63,6 +73,12 @@ const SUGGEST_PER_MINUTE = 30;
 const REINDEX_BUDGET_MS = 150_000;
 const INDEX_PER_MINUTE = 6;
 const CSP = "default-src 'none'; style-src 'unsafe-inline'; img-src data:; form-action 'self'; frame-ancestors 'none'; base-uri 'none'";
+
+function auditSubject(tool: string, args: Record<string, unknown>): string | null {
+  const gatewayTarget = typeof args.server === "string" ? `${args.server}:${typeof args.tool === "string" ? args.tool : "tools"}` : null;
+  const named = typeof args.name === "string" && (tool.startsWith("skill_") || tool === "memory_save") ? `${tool.startsWith("skill_") ? "skill" : "memory"}:${cleanLine(args.name, MAX_ENTRY_NAME)}` : null;
+  return typeof args.repo === "string" ? args.repo : typeof args.post_id === "string" ? args.post_id : (gatewayTarget ?? named);
+}
 
 export function createApp(deps: AppDeps): Hono {
   const { config, store, auth, access, githubFor, limiter } = deps;
@@ -1116,6 +1132,148 @@ export function createApp(deps: AppDeps): Hono {
     return c.json({ access_token: issued.token, token_type: "Bearer", expires_in: Math.floor(config.agentTokenTtlMs / 1000) }, 200, { "cache-control": "no-store", pragma: "no-cache" });
   });
 
+  const profilesOf = async (uid: number): Promise<AgentProfile[]> => {
+    const profile = await store.profile(uid);
+    return profilesFor(profile ? agentsFor(profile.kit) : []);
+  };
+
+  const executeRun = async (uid: number, login: string, id: string, profile: AgentProfile, goal: string, allowChanges: boolean): Promise<void> => {
+    const principal: Principal = { tokenId: `run:${id}`, uid, login, kind: "agent", client: "runner" };
+    const record = async (step: Omit<RunStep, "at">) => store.addRunStep(id, { ...step, at: now() });
+    let client: Client | null = null;
+    let server: ReturnType<typeof createBoardServer> | null = null;
+    const deadline = AbortSignal.timeout(RUN_DEADLINE_MS);
+    try {
+      if (!model) throw new Error("model_unconfigured");
+      server = createBoardServer({ principal, access, store, publicUrl: config.publicUrl, now, github: async () => githubFor(await auth.githubToken(uid)), upstream: upstreamFor(uid) });
+      client = new Client({ name: "companybrain-runner", version: "1.0.0" });
+      const [clientSide, serverSide] = InMemoryTransport.createLinkedPair();
+      await server.connect(serverSide);
+      await client.connect(clientSide);
+      const outcome = await runAgent({
+        model,
+        client,
+        profile,
+        goal,
+        signal: deadline,
+        record,
+        onCall: async (tool, args, ok) => {
+          const subject = auditSubject(tool, args);
+          await store.audit({ uid, tokenId: principal.tokenId, client: "runner", tool, subject: subject === null ? null : cleanLine(subject, 201), ok }).catch(() => undefined);
+        },
+        gate: async (tool, args, readOnly) => {
+          if (readOnly) return null;
+          if (allowChanges && !profile.builds) return null;
+          if (!CREATE_WRITES.has(tool)) return profile.builds ? "The librarian only reads sources and adds new entries." : "Changes are off for this run, so this tool is not allowed. The person can allow changes when starting a run.";
+          const kind = tool === "memory_save" ? "memory" : String(args.kind ?? "");
+          const name = String(args.name ?? "");
+          if ((ENTRY_KINDS as readonly string[]).includes(kind) && name && (await store.getEntry(kind as EntryKind, uid, name))) {
+            return `An entry named "${cleanLine(name, 80)}" already exists. Without changes allowed, runs only add new entries, so pick another name or skip it.`;
+          }
+          return null;
+        },
+      });
+      await store.finishRun(id, outcome.status, outcome.answer);
+    } catch (err) {
+      const message =
+        err instanceof Error && err.message === "model_unconfigured"
+          ? "No model is configured, so agents cannot run yet."
+          : deadline.aborted
+            ? "The run hit its time limit and was stopped."
+            : err instanceof Error && err.message.startsWith("model_unavailable")
+              ? "The model could not be reached. Try again in a moment."
+              : "The run failed on the server. Try again shortly.";
+      console.error(`agent run failed: ${err instanceof Error ? err.name : typeof err}`);
+      await record({ kind: "error", text: message }).catch(() => undefined);
+      await store.finishRun(id, "failed", message).catch(() => undefined);
+    } finally {
+      await client?.close().catch(() => undefined);
+      await server?.close().catch(() => undefined);
+    }
+  };
+
+  const defer = deps.defer ?? waitUntil;
+
+  const startRun = async (uid: number, login: string, profile: AgentProfile, goal: string, allowChanges: boolean): Promise<string | null> => {
+    const id = randomBytes(12).toString("base64url");
+    if (!(await store.createRun({ id, uid, agent: profile.id, goal, allowActions: allowChanges }))) return null;
+    defer(executeRun(uid, login, id, profile, goal, allowChanges).catch((err: unknown) => console.error(`agent run crashed: ${err instanceof Error ? err.name : typeof err}`)));
+    return id;
+  };
+
+  app.get("/api/app/runs", async (c) => {
+    const principal = await session(c);
+    if (!principal) return c.json({ error: "sign_in" }, 401);
+    const agent = c.req.query("agent");
+    const [runs, profiles, settings] = await Promise.all([store.listRuns(principal.uid, 20, agent), profilesOf(principal.uid), store.brainSettings(principal.uid)]);
+    return c.json({
+      runs,
+      agents: profiles.map((p) => ({ id: p.id, name: p.name, summary: p.summary, suggestions: p.suggestions, builds: p.builds === true })),
+      autoBuild: settings,
+      canRun: model !== null,
+      maxSteps: MAX_STEPS,
+      perDay: RUNS_PER_DAY,
+      now: now(),
+    });
+  });
+
+  app.get("/api/app/runs/:id", async (c) => {
+    const principal = await session(c);
+    if (!principal) return c.json({ error: "sign_in" }, 401);
+    const run = await store.getRun(principal.uid, c.req.param("id"));
+    return run ? c.json({ run, now: now() }) : c.json({ error: "not_found" }, 404);
+  });
+
+  app.post("/api/app/runs", jsonLimit, async (c) => {
+    const principal = await session(c);
+    if (!principal) return c.json({ error: "sign_in" }, 401);
+    if (!sameOrigin(c)) return c.json({ error: "blocked" }, 403);
+    if (!model) return c.json({ error: "no_model" }, 503);
+    const payload = (await c.req.json().catch(() => null)) as { agent?: unknown; goal?: unknown; allowChanges?: unknown } | null;
+    const profile = (await profilesOf(principal.uid)).find((p) => p.id === payload?.agent);
+    const goal = typeof payload?.goal === "string" ? cleanText(payload.goal, MAX_GOAL).trim() : "";
+    if (!profile || !goal) return c.json({ error: "bad_fields" }, 400);
+    if (await store.hasRunningRun(principal.uid)) return c.json({ error: "busy" }, 409);
+    if ((await store.hit(`runs:${principal.uid}`, 86_400_000)) > RUNS_PER_DAY) return c.json({ error: "rate_limited" }, 429);
+    const id = await startRun(principal.uid, principal.login, profile, goal, payload?.allowChanges === true);
+    return id ? c.json({ id }, 202) : c.json({ error: "busy" }, 409);
+  });
+
+  app.post("/api/app/build", jsonLimit, async (c) => {
+    const principal = await session(c);
+    if (!principal) return c.json({ error: "sign_in" }, 401);
+    if (!sameOrigin(c)) return c.json({ error: "blocked" }, 403);
+    const payload = (await c.req.json().catch(() => null)) as { autoBuild?: unknown; now?: unknown } | null;
+    if (typeof payload?.autoBuild === "boolean") await store.setAutoBuild(principal.uid, payload.autoBuild);
+    if (payload?.now !== true) return c.json({ autoBuild: await store.brainSettings(principal.uid) });
+    if (!model) return c.json({ error: "no_model" }, 503);
+    if (await store.hasRunningRun(principal.uid)) return c.json({ error: "busy" }, 409);
+    if ((await store.hit(`runs:${principal.uid}`, 86_400_000)) > RUNS_PER_DAY) return c.json({ error: "rate_limited" }, 429);
+    const id = await startRun(principal.uid, principal.login, LIBRARIAN, LIBRARIAN_GOAL, false);
+    return id ? c.json({ id, autoBuild: await store.brainSettings(principal.uid) }, 202) : c.json({ error: "busy" }, 409);
+  });
+
+  app.get("/cron/build", async (c) => {
+    if (!cronAuthorized(c)) return c.text("Not found.", 404);
+    if (!model) return c.json({ built: 0, reason: "no_model" });
+    const uids = await store.claimAutoBuilds(now() - AUTO_BUILD_EVERY_MS, AUTO_BUILDS_PER_CRON);
+    const builds = await Promise.allSettled(
+      uids.map(async (uid) => {
+        const cred = await store.credential(uid);
+        if (!cred || !(await store.profile(uid))) return false;
+        const id = randomBytes(12).toString("base64url");
+        if (!(await store.createRun({ id, uid, agent: LIBRARIAN.id, goal: LIBRARIAN_GOAL, allowActions: false }))) {
+          await store.releaseAutoBuild(uid);
+          return false;
+        }
+        await executeRun(uid, cred.login, id, LIBRARIAN, LIBRARIAN_GOAL, false);
+        if ((await store.getRun(uid, id))?.status === "failed") await store.releaseAutoBuild(uid);
+        return true;
+      }),
+    );
+    return c.json({ built: builds.filter((b) => b.status === "fulfilled" && b.value).length });
+  });
+
   const rpcError = (c: Context, status: 400 | 401 | 403 | 405 | 413 | 429, code: number, message: string, headers: Record<string, string> = {}) =>
     c.json({ jsonrpc: "2.0", id: null, error: { code, message } }, status, headers);
 
@@ -1158,11 +1316,8 @@ export function createApp(deps: AppDeps): Hono {
         const call = parsed as { method?: unknown; params?: { name?: unknown; arguments?: unknown } } | null;
         if (call?.method === "tools/call") {
           const reply = (await res.clone().json().catch(() => null)) as { error?: unknown; result?: { isError?: boolean } } | null;
-          const args = (call.params?.arguments ?? {}) as { repo?: unknown; post_id?: unknown; server?: unknown; tool?: unknown; name?: unknown };
           const tool = String(call.params?.name ?? "");
-          const gatewayTarget = typeof args.server === "string" ? `${args.server}:${typeof args.tool === "string" ? args.tool : "tools"}` : null;
-          const named = typeof args.name === "string" && (tool.startsWith("skill_") || tool === "memory_save") ? `${tool.startsWith("skill_") ? "skill" : "memory"}:${cleanLine(args.name, MAX_ENTRY_NAME)}` : null;
-          const subject = typeof args.repo === "string" ? args.repo : typeof args.post_id === "string" ? args.post_id : (gatewayTarget ?? named);
+          const subject = auditSubject(tool, (call.params?.arguments ?? {}) as Record<string, unknown>);
           if (TOOL_NAMES.has(tool)) await store
             .audit({
               uid: principal.uid,

@@ -114,4 +114,26 @@ test("real Postgres: locks hold across separate connection pools", { skip: !url 
     assert.equal(new Set(rules.map((r) => r.name)).size, rules.length, "no duplicate entries when instances seed at once");
     assert.equal((await s0.listUploads(950)).length, 2);
   });
+
+  await t.test("one agent run at a time per person, across instances", async () => {
+    await warm();
+    const started = await Promise.all(stores.map((s, i) => s.createRun({ id: `run-${i}`, uid: 960, agent: "assistant", goal: "g", allowActions: false })));
+    assert.equal(started.filter(Boolean).length, 1);
+    const winner = `run-${started.indexOf(true)}`;
+    const s0 = stores[0] as Store;
+    await s0.addRunStep(winner, { at: Date.now(), kind: "call", tool: "whoami", text: "{}" });
+    await s0.addRunStep(winner, { at: Date.now(), kind: "result", tool: "whoami", text: "ok", ok: true });
+    await s0.finishRun(winner, "done", "Finished.");
+    const [listed] = await s0.listRuns(960, 5);
+    assert.deepEqual([listed?.status, listed?.calls, listed?.steps.length], ["done", 1, 0]);
+    assert.equal((await s0.getRun(960, winner))?.steps.length, 2);
+    assert.equal(await s0.createRun({ id: "run-next", uid: 960, agent: "assistant", goal: "g", allowActions: false }), true, "a finished run frees the slot");
+  });
+
+  await t.test("a day-long rate limit survives the hourly purge", async () => {
+    const s0 = stores[0] as Store;
+    await s0.hit("pg-day", 86_400_000);
+    await s0.purge();
+    assert.equal(await s0.hit("pg-day", 86_400_000), 2);
+  });
 });
