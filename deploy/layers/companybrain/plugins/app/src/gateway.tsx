@@ -1,6 +1,6 @@
 import { useEffect, useState, type JSX } from "react";
 import { AlertBanner, Button, Caption, Card, EmptyState, Heading, ListItem, Skeleton, Stack, Text, TextInput, tokens, usePal } from "./ui";
-import { ApiError, CLIENT_LABEL, THEME, get, post, reason, send, when } from "./shared";
+import { ApiError, clientName, THEME, get, post, reason, send, when } from "./shared";
 
 interface GatewayView {
   servers: Array<{ name: string; url: string; hasToken: boolean; createdAt: number }>;
@@ -83,6 +83,8 @@ export function GatewayScreen(): JSX.Element {
         </Text>
       </Stack>
 
+      <ConnectCard mcpUrl={view.mcpUrl} />
+
       <Stack gap={10}>
         <Heading level={5} theme={THEME}>
           MCP servers
@@ -160,7 +162,7 @@ export function GatewayScreen(): JSX.Element {
               <ListItem
                 key={`${c.at}-${i}`}
                 title={c.subject ?? "unknown"}
-                subtitle={`${CLIENT_LABEL[c.client] ?? c.client} · ${when(c.at, view.now)}`}
+                subtitle={`${clientName(c.client)} · ${when(c.at, view.now)}`}
                 right={
                   <Text theme={THEME} style={{ ...tokens.type.sm, color: c.ok ? pal.success : pal.danger }}>
                     {c.ok ? "Answered" : "Failed"}
@@ -187,13 +189,47 @@ export function GatewayScreen(): JSX.Element {
           </Stack>
         </Card>
       </Stack>
-
-      <Stack gap={6}>
-        <Caption theme={THEME}>AGENTS CONNECT TO</Caption>
-        <Text mono theme={THEME} style={{ overflowWrap: "anywhere" }}>
-          {view.mcpUrl}
-        </Text>
-      </Stack>
     </Stack>
+  );
+}
+
+function ConnectCard({ mcpUrl }: { mcpUrl: string }): JSX.Element {
+  const pal = usePal(THEME);
+  const [copied, setCopied] = useState<boolean | null>(null);
+  const copy = async (): Promise<void> => {
+    try {
+      await navigator.clipboard.writeText(mcpUrl);
+      setCopied(true);
+    } catch {
+      setCopied(false);
+    }
+  };
+  return (
+    <Card theme={THEME}>
+      <Stack gap={10}>
+        <Stack gap={4}>
+          <Text theme={THEME} weight="semibold">
+            Connect any MCP client
+          </Text>
+          <Text secondary size="sm" theme={THEME}>
+            Add this URL as a custom connector in Claude, ChatGPT, Cursor or VS Code. The client opens a GitHub sign-in, you allow it once, and it works on your brain. No token to copy.
+          </Text>
+        </Stack>
+        <Text mono theme={THEME} style={{ overflowWrap: "anywhere" }}>
+          {mcpUrl}
+        </Text>
+        <Text secondary size="sm" theme={THEME}>
+          {`Claude Code: claude mcp add --transport http companybrain ${mcpUrl}`}
+        </Text>
+        <div role="status" aria-live="polite" style={{ minHeight: 18, fontSize: 12.5, color: copied === false ? pal.danger : pal.accentText }}>
+          {copied === null ? "" : copied ? "URL copied." : "Copy failed. Select the URL above instead."}
+        </div>
+        <div>
+          <Button variant="secondary" size="sm" theme={THEME} onClick={() => void copy()}>
+            Copy URL
+          </Button>
+        </div>
+      </Stack>
+    </Card>
   );
 }

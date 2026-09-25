@@ -1,6 +1,7 @@
 import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js";
 import { type Context, Hono } from "hono";
 import { bodyLimit } from "hono/body-limit";
+import { cors } from "hono/cors";
 import { deleteCookie, getCookie, setCookie } from "hono/cookie";
 import { createHash, randomBytes } from "node:crypto";
 import type { AccessChecker } from "./access.ts";
@@ -14,6 +15,7 @@ import type { RateLimiter } from "./limits.ts";
 import { APP_JS_BASE64 } from "./app-bundle.ts";
 import { FAVICON } from "./brand.ts";
 import { createBoardServer, describeError, TOOL_NAMES } from "./mcp.ts";
+import { AUTHORIZE_PATH, CODE_TTL_MS, formActionFor, MAX_NEXT_LENGTH, issueCode, metadata, NEXT_TTL_MS, readClient, redeemCode, redirectAllowed, registerClient, resourceAllowed, validChallenge, withParams } from "./oauth.ts";
 import { forgetReference, quietly, seedHarnessSkill, seedPerson, seedProject, seedReference } from "./seed.ts";
 import { AGREEMENT, agentCards, HANDBOOK, packsOf, readWelcome, seedStarterKit, type WelcomeInput } from "./starter.ts";
 import { isMemoryType, MEMORY_PURPOSE, parseMemory, renderMemory } from "./memory.ts";
@@ -22,7 +24,7 @@ import { candidates, rank, type Signals } from "./suggest.ts";
 import { cleanLine, cleanText } from "./untrusted.ts";
 import { ACTIVE_AGENT_TOKENS_PER_USER, ENTRY_KINDS, KIND_PURPOSE, MAX_DOC_BODY, MAX_ENTRY_BODY, MAX_ENTRY_NAME, MAX_UPLOAD_NAME, type Store } from "./store.ts";
 import { hashToken, isAgentClient, seal, unseal } from "./token.ts";
-import { type ErrorCode, isErrorCode, renderBoard, renderConnected, renderDenied, renderHome, renderMessage, renderTokenCreated } from "./web.ts";
+import { type ErrorCode, isErrorCode, renderBoard, renderConnected, renderDenied, renderHome, renderConsent, renderMessage, renderTokenCreated } from "./web.ts";
 import { renderWelcome, WELCOME_CSP } from "./welcome.ts";
 
 export interface AppDeps {
@@ -40,6 +42,8 @@ export interface AppDeps {
 
 const SESSION_COOKIE = "cb_session";
 const STATE_COOKIE = "cb_state";
+const NEXT_COOKIE = "cb_next";
+const OAUTH_BODY_LIMIT = 16 * 1024;
 const STATE_MAX_AGE_MS = 10 * 60_000;
 const MCP_BODY_LIMIT = 256 * 1024;
 const FORM_BODY_LIMIT = 4 * 1024;
@@ -95,6 +99,17 @@ export function createApp(deps: AppDeps): Hono {
 
   app.get("/health", (c) => c.json({ ok: true }));
 
+  const rememberNext = (c: Context, path: string) =>
+    setCookie(c, NEXT_COOKIE, seal(config.secret, "next", { path, at: now() }), { httpOnly: true, secure, sameSite: "Lax", path: "/", maxAge: NEXT_TTL_MS / 1000 });
+  const takeNext = (c: Context): string | null => {
+    const raw = getCookie(c, NEXT_COOKIE);
+    if (!raw) return null;
+    deleteCookie(c, NEXT_COOKIE, { path: "/" });
+    const stored = unseal(config.secret, "next", raw) as { path?: unknown; at?: unknown } | null;
+    if (typeof stored?.path !== "string" || typeof stored.at !== "number" || now() - stored.at > NEXT_TTL_MS) return null;
+    return stored.path.startsWith(`${AUTHORIZE_PATH}?`) ? stored.path : null;
+  };
+
   const cronAuthorized = (c: Context): boolean =>
     Boolean(config.cronSecret) && hashToken(c.req.header("authorization") ?? "") === hashToken(`Bearer ${config.cronSecret}`);
 
@@ -113,6 +128,7 @@ export function createApp(deps: AppDeps): Hono {
     return c.html(
       renderConnected({
         login: principal.login,
+        mcpUrl,
         tokens: await store.activeTokens(principal.uid, "agent"),
         activity: await store.auditTrail(principal.uid, 20),
         indexed: (await store.sources(principal.uid)).length > 0,
@@ -128,6 +144,16 @@ export function createApp(deps: AppDeps): Hono {
     );
   });
 
+  const prepareAgent = (uid: number, login: string) =>
+    Promise.race([
+      quietly("person", async () => {
+        const repos = (await githubFor(await auth.githubToken(uid)).listRepos(12)).map((r) => r.fullName);
+        await seedPerson(store, uid, login, repos);
+        await weaveHarness(uid, login, repos);
+      }),
+      new Promise((resolve) => setTimeout(resolve, SEED_WAIT_MS)),
+    ]);
+
   const formLimit = bodyLimit({ maxSize: FORM_BODY_LIMIT, onError: (c) => c.text("Request body too large.", 413) });
 
   app.post("/tokens", formLimit, async (c) => {
@@ -141,14 +167,7 @@ export function createApp(deps: AppDeps): Hono {
     if (!issued) {
       return c.html(renderMessage("Token limit reached", `You have ${ACTIVE_AGENT_TOKENS_PER_USER} active agent tokens. Revoke one before creating another.`), 429);
     }
-    await Promise.race([
-      quietly("person", async () => {
-        const repos = (await githubFor(await auth.githubToken(principal.uid)).listRepos(12)).map((r) => r.fullName);
-        await seedPerson(store, principal.uid, principal.login, repos);
-        await weaveHarness(principal.uid, principal.login, repos);
-      }),
-      new Promise((resolve) => setTimeout(resolve, SEED_WAIT_MS)),
-    ]);
+    await prepareAgent(principal.uid, principal.login);
     return c.html(renderTokenCreated({ login: principal.login, client, token: issued.token, mcpUrl, expiresAt: issued.row.expiresAt }));
   });
 
@@ -173,7 +192,9 @@ export function createApp(deps: AppDeps): Hono {
   app.get("/auth/github/start", (c) => {
     if (!githubConfigured) return c.text("GitHub sign-in is not configured.", 503);
     const nonce = randomBytes(18).toString("base64url");
-    setCookie(c, STATE_COOKIE, seal(config.secret, "state", { nonce, at: now() }), {
+    const asked = c.req.query("next");
+    const next = asked && asked.startsWith(`${AUTHORIZE_PATH}?`) && asked.length <= MAX_NEXT_LENGTH ? asked : undefined;
+    setCookie(c, STATE_COOKIE, seal(config.secret, "state", { nonce, at: now(), ...(next ? { next } : {}) }), {
       httpOnly: true,
       secure,
       sameSite: "Lax",
@@ -191,7 +212,7 @@ export function createApp(deps: AppDeps): Hono {
   app.get("/auth/github/callback", async (c) => {
     if (!githubConfigured) return c.text("GitHub sign-in is not configured.", 503);
     const fail = (code: ErrorCode) => c.redirect(`/?error=${code}`);
-    const stored = unseal(config.secret, "state", getCookie(c, STATE_COOKIE) ?? "") as { nonce?: string; at?: number } | null;
+    const stored = unseal(config.secret, "state", getCookie(c, STATE_COOKIE) ?? "") as { nonce?: string; at?: number; next?: string } | null;
     deleteCookie(c, STATE_COOKIE, { path: "/auth/github" });
     if (!stored?.nonce || !stored.at || stored.nonce !== c.req.query("state") || now() - stored.at > STATE_MAX_AGE_MS) return fail("state");
     const code = c.req.query("code");
@@ -222,7 +243,10 @@ export function createApp(deps: AppDeps): Hono {
         path: "/",
         maxAge: Math.floor(config.sessionTtlMs / 1000),
       });
-      return c.redirect(profile ? "/app" : "/welcome");
+      const next = typeof stored.next === "string" && stored.next.startsWith(`${AUTHORIZE_PATH}?`) ? stored.next : null;
+      if (profile) return c.redirect(next ?? "/app");
+      if (next) rememberNext(c, next);
+      return c.redirect("/welcome");
     } catch {
       return fail("exchange");
     }
@@ -282,7 +306,7 @@ export function createApp(deps: AppDeps): Hono {
       await quietly("harness", () => weaveHarness(principal.uid, principal.login, repos));
       await quietly("person", () => seedPerson(store, principal.uid, principal.login, repos));
     }
-    return c.redirect("/app");
+    return c.redirect(takeNext(c) ?? "/app");
   });
 
   app.post("/auth/logout", formLimit, async (c) => {
@@ -885,6 +909,113 @@ export function createApp(deps: AppDeps): Hono {
     }
   });
 
+  const oauthCors = cors({
+    origin: "*",
+    allowHeaders: ["authorization", "content-type", "mcp-protocol-version", "mcp-session-id"],
+    exposeHeaders: ["www-authenticate", "mcp-session-id"],
+    maxAge: 86_400,
+  });
+  for (const path of ["/.well-known/*", "/oauth/register", "/oauth/token", "/mcp"]) app.use(path, oauthCors);
+  const discovery = metadata(config.publicUrl);
+  app.get("/.well-known/oauth-protected-resource", (c) => c.json(discovery.protectedResource));
+  app.get("/.well-known/oauth-protected-resource/mcp", (c) => c.json(discovery.protectedResource));
+  app.get("/.well-known/oauth-authorization-server", (c) => c.json(discovery.authorizationServer));
+
+  const oauthError = (c: Context, status: 400 | 401 | 413, error: string, description: string) =>
+    c.json({ error, error_description: description }, status, { "cache-control": "no-store" });
+  const oauthLimit = bodyLimit({ maxSize: OAUTH_BODY_LIMIT, onError: (c) => oauthError(c, 413, "invalid_request", "Request body too large.") });
+
+  app.post("/oauth/register", oauthLimit, async (c) => {
+    const registered = registerClient(config.secret, await c.req.json().catch(() => null), now());
+    if ("error" in registered) return oauthError(c, 400, "invalid_redirect_uri", registered.error);
+    return c.json(registered.client, 201, { "cache-control": "no-store" });
+  });
+
+  const authorizeRequest = (field: (name: string) => string | undefined) => {
+    const clientId = field("client_id") ?? "";
+    const redirectUri = field("redirect_uri") ?? "";
+    const client = readClient(config.secret, clientId);
+    if (!client) return { fatal: "This app's registration is not recognised. Remove the connector and add it again." };
+    if (!redirectAllowed(client, redirectUri)) return { fatal: "This app asked to return somewhere it did not register, so the sign-in was stopped." };
+    const state = field("state");
+    const fail = (description: string) => ({ fatal: `${description} Remove the connector and add it again, or ask the app's maker.` });
+    if (field("response_type") !== "code") return fail("Only the code response type is supported.");
+    const challenge = field("code_challenge") ?? "";
+    if (field("code_challenge_method") !== "S256" || !validChallenge(challenge)) return fail("PKCE with S256 is required.");
+    if (state !== undefined && state.length > 500) return fail("The state value is too long.");
+    const resource = field("resource");
+    if (!resourceAllowed(resource, config.publicUrl)) return fail("This server only grants access to its own MCP endpoint.");
+    const fields: Record<string, string> = { client_id: clientId, redirect_uri: redirectUri, response_type: "code", code_challenge: challenge, code_challenge_method: "S256" };
+    if (state !== undefined) fields.state = state;
+    if (resource !== undefined) fields.resource = resource;
+    return { client, clientId, redirectUri, challenge, state, fields };
+  };
+
+  app.get(AUTHORIZE_PATH, async (c) => {
+    const req = authorizeRequest((name) => c.req.query(name));
+    if ("fatal" in req) return c.html(renderMessage("Cannot connect this app", req.fatal as string), 400);
+    const here = `${AUTHORIZE_PATH}?${new URLSearchParams(req.fields).toString()}`;
+    if (here.length > MAX_NEXT_LENGTH) return c.html(renderMessage("Cannot connect this app", "This app's sign-in request is too large. Remove the connector and add it again."), 400);
+    const principal = await session(c);
+    if (!principal) {
+      if (!githubConfigured) return c.text("GitHub sign-in is not configured.", 503);
+      return c.redirect(`/auth/github/start?next=${encodeURIComponent(here)}`);
+    }
+    if (!(await store.profile(principal.uid))) {
+      rememberNext(c, here);
+      return c.redirect("/welcome");
+    }
+    const target = new URL(req.redirectUri);
+    c.header("content-security-policy", `default-src 'none'; style-src 'unsafe-inline'; img-src data:; form-action 'self' ${formActionFor(req.redirectUri)}; frame-ancestors 'none'; base-uri 'none'`);
+    return c.html(renderConsent({ login: principal.login, clientName: req.client.name, redirectHost: target.host ? `${target.protocol}//${target.host}` : target.protocol, fields: req.fields }));
+  });
+
+  app.post(AUTHORIZE_PATH, oauthLimit, async (c) => {
+    const principal = await session(c);
+    if (!principal) return c.redirect("/");
+    if (!sameOrigin(c)) return c.html(renderMessage("Request blocked", "That request did not come from this site."), 403);
+    const form = await c.req.parseBody();
+    const field = (name: string) => (typeof form[name] === "string" ? form[name] : undefined);
+    const req = authorizeRequest(field);
+    if ("fatal" in req) return c.html(renderMessage("Cannot connect this app", req.fatal as string), 400);
+    if (!(await store.profile(principal.uid))) return c.redirect("/welcome");
+    const state: Record<string, string> = req.state !== undefined ? { state: req.state } : {};
+    if (field("decision") !== "allow") return c.redirect(withParams(req.redirectUri, { error: "access_denied", ...state }));
+    const active = await store.activeTokens(principal.uid, "agent");
+    if (active.length >= ACTIVE_AGENT_TOKENS_PER_USER && !active.some((t) => t.client === `oauth:${req.client.name}`)) {
+      return c.html(renderMessage("Token limit reached", `You have ${ACTIVE_AGENT_TOKENS_PER_USER} active agent tokens. Revoke one on the setup page, then connect again.`), 429);
+    }
+    const code = issueCode(config.secret, { uid: principal.uid, clientId: req.clientId, redirectUri: req.redirectUri, challenge: req.challenge }, now());
+    return c.redirect(withParams(req.redirectUri, { code, ...state }));
+  });
+
+  app.post("/oauth/token", oauthLimit, async (c) => {
+    const form = await c.req.parseBody().catch(() => ({}) as Record<string, unknown>);
+    const field = (name: string) => (typeof form[name] === "string" ? (form[name] as string) : undefined);
+    if (field("grant_type") !== "authorization_code") return oauthError(c, 400, "unsupported_grant_type", "Only authorization_code is supported.");
+    const basic = /^Basic\s+(.+)$/i.exec(c.req.header("authorization") ?? "")?.[1];
+    const clientId = field("client_id") ?? (basic ? (Buffer.from(basic, "base64").toString("utf8").split(":")[0] ?? "") : "");
+    const client = readClient(config.secret, clientId);
+    if (!client) return oauthError(c, 401, "invalid_client", "Unknown client. Register again.");
+    const redeemed = redeemCode(config.secret, { code: field("code") ?? "", clientId, redirectUri: field("redirect_uri") ?? "", verifier: field("code_verifier") ?? "" }, now());
+    const invalid = () => oauthError(c, 400, "invalid_grant", "The authorization code is invalid, expired or already used.");
+    if (!redeemed || (await store.hit(`oauth-code:${redeemed.nonce}`, CODE_TTL_MS * 2)) > 1) return invalid();
+    const cred = await store.credential(redeemed.uid);
+    if (!cred) return invalid();
+    const tag = `oauth:${client.name}`;
+    let issued = await auth.issue(redeemed.uid, "agent", tag, config.agentTokenTtlMs);
+    if (!issued) {
+      const oldest = (await store.activeTokens(redeemed.uid, "agent")).filter((t) => t.client === tag).sort((a, b) => a.createdAt - b.createdAt)[0];
+      if (oldest) {
+        await store.revokeToken(oldest.id, redeemed.uid);
+        issued = await auth.issue(redeemed.uid, "agent", tag, config.agentTokenTtlMs);
+      }
+    }
+    if (!issued) return oauthError(c, 400, "invalid_grant", `You have ${ACTIVE_AGENT_TOKENS_PER_USER} active agent tokens. Revoke one at ${config.publicUrl} and connect again.`);
+    await prepareAgent(redeemed.uid, cred.login);
+    return c.json({ access_token: issued.token, token_type: "Bearer", expires_in: Math.floor(config.agentTokenTtlMs / 1000) }, 200, { "cache-control": "no-store", pragma: "no-cache" });
+  });
+
   const rpcError = (c: Context, status: 400 | 401 | 403 | 405 | 413 | 429, code: number, message: string, headers: Record<string, string> = {}) =>
     c.json({ jsonrpc: "2.0", id: null, error: { code, message } }, status, headers);
 
@@ -896,8 +1027,8 @@ export function createApp(deps: AppDeps): Hono {
     async (c) => {
       const principal = await auth.verify(c.req.header("authorization"), "agent");
       if (!principal) {
-        return rpcError(c, 401, -32001, `Unauthorized. Connect GitHub and create an agent token at ${config.publicUrl}.`, {
-          "www-authenticate": 'Bearer realm="companybrain-board"',
+        return rpcError(c, 401, -32001, `Unauthorized. Sign in from your MCP client, or create an agent token at ${config.publicUrl}.`, {
+          "www-authenticate": `Bearer realm="companybrain-board", resource_metadata="${config.publicUrl}/.well-known/oauth-protected-resource/mcp"`,
         });
       }
       if (!(await limiter.allow(`uid:${principal.uid}`))) return rpcError(c, 429, -32000, "Too many requests. Slow down.", { "retry-after": "60" });

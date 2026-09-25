@@ -243,7 +243,7 @@ const CLIENT_NOTES: Record<AgentClient, string> = {
   grok: "A remote MCP tool for the xAI Responses API.",
 };
 
-const clientLabel = (client: string): string => escapeHtml(CLIENT_LABELS[client as AgentClient] ?? client);
+const clientLabel = (client: string): string => escapeHtml(CLIENT_LABELS[client as AgentClient] ?? client.replace(/^oauth:(.*)$/, "$1 connector"));
 
 interface SetupBlock {
   label: string;
@@ -403,7 +403,7 @@ function knowledgeStep(indexed: boolean): { state: "done" | "current" | "todo"; 
   return indexed ? { state: "done", status: "Done" } : { state: "current", status: "Next" };
 }
 
-export function renderConnected(opts: { login: string; tokens: TokenRow[]; activity: AuditEntry[]; boards: string[]; indexed: boolean; now: number }): string {
+export function renderConnected(opts: { login: string; mcpUrl: string; tokens: TokenRow[]; activity: AuditEntry[]; boards: string[]; indexed: boolean; now: number }): string {
   const { now } = opts;
   const lastUse = new Map<string, number | null>();
   for (const t of opts.tokens) lastUse.set(t.client, Math.max(lastUse.get(t.client) ?? 0, t.lastUsedAt ?? 0) || null);
@@ -433,7 +433,7 @@ ${step(
   knowledge.status,
   `<p>In the app, open Sources and index a repository or add a file. Then ask a question from Home. Your memory, skills, decisions and work waiting for review live there too.</p><a class="button" href="/app">Open the app</a>`,
 )}
-${step(3, agentConnected ? "done" : lastUse.size ? "current" : "todo", "Connect an agent", agentStatus, `<p>${agentIntro}</p>${agents}<div class="clients">${create}</div>`)}
+${step(3, agentConnected ? "done" : lastUse.size ? "current" : "todo", "Connect an agent", agentStatus, `<p>${agentIntro}</p>${agents}<div class="panel"><h3>Any MCP client, no token</h3><p>Add <code>${escapeHtml(opts.mcpUrl)}</code> as a custom connector in Claude, ChatGPT, Cursor or VS Code. The client opens a GitHub sign-in and you allow it once.</p></div><div class="clients">${create}</div>`)}
 </ol>`;
   const capabilities = `<h2>What your agents can do</h2>
 <p class="section-intro">Once connected, an agent gets these tools. Anything it reads from repositories or other agents reaches it as data, never as instructions.</p>
@@ -521,7 +521,7 @@ const EVENT_VERBS: Record<BoardEvent["kind"], string> = {
 
 function card(p: Post, now: number, opts: { open?: boolean; title?: string; number?: string } = {}): string {
   const meta = [
-    p.type === "task" ? "" : `${escapeHtml(p.authorLogin)} via ${escapeHtml(p.client)}`,
+    p.type === "task" ? "" : `${escapeHtml(p.authorLogin)} via ${clientLabel(p.client)}`,
     stamp(p.createdAt, now),
     p.target ? `on ${escapeHtml(p.target)}` : "",
     p.to ? `for ${escapeHtml(p.to)}` : "",
@@ -597,5 +597,19 @@ export function renderMessage(title: string, message: string): string {
   return page(
     `${title} · Company Brain`,
     `<div class="center"><div class="panel"><h1>${escapeHtml(title)}</h1><p class="muted">${escapeHtml(message)}</p><a class="button quiet" href="/">Back to home</a></div></div>`,
+  );
+}
+
+export function renderConsent(opts: { login: string; clientName: string; redirectHost: string; fields: Record<string, string> }): string {
+  const hidden = Object.entries(opts.fields)
+    .map(([k, v]) => `<input type="hidden" name="${escapeHtml(k)}" value="${escapeHtml(v)}">`)
+    .join("");
+  return page(
+    "Connect an agent · Company Brain",
+    `<div class="center"><form method="post" action="/oauth/authorize" class="panel"><h1>Connect ${escapeHtml(opts.clientName)}?</h1>
+<p>It will act as <b>${escapeHtml(opts.login)}</b> in your Company Brain: read and add memory, skills and knowledge, and use the boards and servers you can reach.</p>
+<p class="muted">After you allow it, you return to <code>${escapeHtml(opts.redirectHost)}</code>. The name above comes from the app itself, so only allow it if you just started connecting it. You can revoke it any time under Active tokens.</p>
+${hidden}<div class="field" style="justify-content:center"><button class="button quiet" type="submit" name="decision" value="deny">Cancel</button><button class="button" type="submit" name="decision" value="allow">Allow</button></div></form></div>`,
+    { signedIn: true },
   );
 }

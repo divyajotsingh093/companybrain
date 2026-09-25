@@ -39,6 +39,8 @@ export const CLIENT_LABEL: Record<string, string> = {
   import: "Import",
 };
 
+export const clientName = (client: string): string => CLIENT_LABEL[client] ?? client.replace(/^oauth:(.*)$/, "$1 connector");
+
 export function when(ms: number | null, now = Date.now()): string {
   if (!ms) return "never";
   const diff = ms - now;

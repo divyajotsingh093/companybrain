@@ -10,7 +10,7 @@ import { HomeScreen, type Destination } from "./home";
 import { MemoryScreen, type MemoryEntry } from "./memory";
 import { SkillsScreen, type SkillEntry } from "./skills";
 import { WorkScreen, pendingReviews, type Work } from "./work";
-import { CLIENT_LABEL, ERROR_COPY, get, reason, send, THEME, when } from "./shared";
+import { clientName, ERROR_COPY, get, reason, send, THEME, when } from "./shared";
 import {
   AlertBanner,
   Badge,
@@ -317,7 +317,7 @@ function AgentsScreen({ me }: { me: Me }): JSX.Element {
             me.tokens.map((t, i) => (
               <ListItem
                 key={t.id}
-                title={CLIENT_LABEL[t.client] ?? t.client}
+                title={clientName(t.client)}
                 subtitle={`Last used ${when(t.lastUsedAt)} · expires ${when(t.expiresAt)}`}
                 right={<StatusBadge status={t.lastUsedAt ? "success" : "default"} theme={THEME}>{t.lastUsedAt ? "active" : "unused"}</StatusBadge>}
                 divider={i < me.tokens.length - 1}
@@ -347,7 +347,7 @@ function AgentsScreen({ me }: { me: Me }): JSX.Element {
               <ListItem
                 key={`${e.at}-${i}`}
                 title={e.tool}
-                subtitle={`${CLIENT_LABEL[e.client] ?? e.client} · ${e.subject ?? "no subject"} · ${when(e.at)}`}
+                subtitle={`${clientName(e.client)} · ${e.subject ?? "no subject"} · ${when(e.at)}`}
                 right={<StatusBadge status={e.ok ? "success" : "error"} theme={THEME}>{e.ok ? "ok" : "failed"}</StatusBadge>}
                 divider={i < me.activity.length - 1}
                 theme={THEME}
@@ -637,7 +637,7 @@ function DecisionsScreen({ view, onAnswered }: { view: Decisions; onAnswered: ()
               <div key={post.id}>
                 <ListItem
                   title={post.title}
-                  subtitle={`${post.authorLogin} via ${CLIENT_LABEL[post.client] ?? post.client} · ${when(post.createdAt, view.now)}`}
+                  subtitle={`${post.authorLogin} via ${clientName(post.client)} · ${when(post.createdAt, view.now)}`}
                   right={<StatusBadge status="warning" theme={THEME}>needs a ruling</StatusBadge>}
                   divider={!open && !last}
                   onClick={() => setOpenId(open ? null : post.id)}
@@ -853,7 +853,7 @@ function BoardScreen({ view, onBack }: { view: BoardView; onBack: () => void }):
             <ListItem
               key={p.id}
               title={p.title}
-              subtitle={`${p.authorLogin} via ${CLIENT_LABEL[p.client] ?? p.client} · ${when(p.createdAt, view.now)}${p.target ? ` · on ${p.target}` : ""}${p.to ? ` · for ${p.to}` : ""}`}
+              subtitle={`${p.authorLogin} via ${clientName(p.client)} · ${when(p.createdAt, view.now)}${p.target ? ` · on ${p.target}` : ""}${p.to ? ` · for ${p.to}` : ""}`}
               right={p.expiresAt ? <Badge theme={THEME}>{when(p.expiresAt, view.now)}</Badge> : undefined}
               divider={i < posts.length - 1}
               theme={THEME}

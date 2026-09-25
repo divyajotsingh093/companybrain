@@ -1,6 +1,6 @@
 import { useState, type JSX } from "react";
 import { AlertBanner, Button, Caption, Card, EmptyState, Heading, Select, Stack, StatusBadge, Text, TextArea, TextInput, tokens, usePal } from "./ui";
-import { ApiError, CLIENT_LABEL, EASE, THEME, injectCss, post, reason, when } from "./shared";
+import { ApiError, clientName, EASE, THEME, injectCss, post, reason, when } from "./shared";
 
 export type WorkStatus = "open" | "working" | "review" | "changes" | "done";
 
@@ -97,7 +97,7 @@ function Timeline({ request, login, now }: { request: WorkRequest; login: string
     { id: "asked", who: "You", what: "asked for this", body: request.body, at: request.createdAt, tone: "textTertiary" as Tone },
     ...request.updates.map((u) => ({
       id: u.id,
-      who: u.client === "web" ? (u.authorLogin === login ? "You" : u.authorLogin) : (CLIENT_LABEL[u.client] ?? u.client),
+      who: u.client === "web" ? (u.authorLogin === login ? "You" : u.authorLogin) : (clientName(u.client)),
       what: UPDATE[u.kind]?.what ?? u.kind,
       body: u.body,
       at: u.at,
