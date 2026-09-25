@@ -5,7 +5,7 @@ import { deleteCookie, getCookie, setCookie } from "hono/cookie";
 import { createHash, randomBytes } from "node:crypto";
 import type { AccessChecker } from "./access.ts";
 import { canModerate, canUseBoard } from "./access.ts";
-import { answerQuestion, gatewayModel, indexRepo, type Model, modelName, readHistory, titleOf } from "./brain.ts";
+import { answerQuestion, createModel, indexRepo, type Model, modelName, readHistory, titleOf } from "./brain.ts";
 import { GATEWAY_NAME, gatewayUrlProblem, MAX_GATEWAYS, openUpstream, publicFetch, sealGatewayToken } from "./gateway.ts";
 import type { Auth, Principal } from "./auth.ts";
 import type { Config } from "./config.ts";
@@ -493,7 +493,7 @@ export function createApp(deps: AppDeps): Hono {
   });
 
 
-  const model = deps.model ?? gatewayModel(process.env, deps.fetch ?? fetch);
+  const model = deps.model ?? createModel(process.env, deps.fetch ?? fetch);
 
   const canRead = (principal: Principal) => async (repoName: string, repoId: number): Promise<boolean> => {
     const allowed = async (name: string) => {

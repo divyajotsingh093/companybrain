@@ -152,25 +152,40 @@ test("a question about something genuinely absent still returns nothing", async 
   assert.equal(body.answer, NO_SOURCES, "loosening the match must not make it answer everything");
 });
 
-test("the model authenticates with a key when given one, and with the platform identity on Vercel", async () => {
-  const { gatewayModel } = await import("../src/brain.ts");
-  const calls: Array<{ auth: string | null; body: { model: string } }> = [];
-  const fakeFetch = (async (_url: string, init: RequestInit) => {
-    calls.push({ auth: new Headers(init.headers).get("authorization"), body: JSON.parse(String(init.body)) });
-    return new Response(JSON.stringify({ choices: [{ message: { content: "ok" } }] }), { status: 200 });
-  }) as unknown as typeof fetch;
+test("models are tried in order: OpenRouter, then the AI Gateway, then a model the free tier allows", async () => {
+  const { createModel } = await import("../src/brain.ts");
+  const calls: Array<{ url: string; auth: string | null; model: string }> = [];
+  const reply = (status: number, content = "ok") => new Response(JSON.stringify({ choices: [{ message: { content } }] }), { status });
+  const fetchWith = (answer: (url: string, model: string) => Response) =>
+    (async (url: string, init: RequestInit) => {
+      const model = (JSON.parse(String(init.body)) as { model: string }).model;
+      calls.push({ url, auth: new Headers(init.headers).get("authorization"), model });
+      return answer(url, model);
+    }) as unknown as typeof fetch;
 
-  assert.equal(gatewayModel({}, fakeFetch, async () => "oidc"), null, "off Vercel with no key there is no model, so Ask says so plainly");
+  assert.equal(createModel({}, fetchWith(() => reply(200)), async () => "oidc"), null, "with no provider configured there is no model, so Ask says so plainly");
 
-  const keyed = gatewayModel({ AI_GATEWAY_API_KEY: "k-123" }, fakeFetch, async () => "oidc-should-not-be-used");
-  assert.equal(await keyed?.("hi"), "ok");
-  assert.equal(calls.at(-1)?.auth, "Bearer k-123", "an explicit key wins");
+  const openrouter = createModel({ OPENROUTER_API_KEY: "or-key", VERCEL: "1" }, fetchWith(() => reply(200)), async () => "oidc");
+  assert.equal(await openrouter?.("hi"), "ok");
+  assert.equal(calls.length, 1);
+  assert.match(calls[0]?.url ?? "", /openrouter\.ai/);
+  assert.equal(calls[0]?.auth, "Bearer or-key");
+  assert.equal(calls[0]?.model, "anthropic/claude-sonnet-5");
 
-  const onVercel = gatewayModel({ VERCEL: "1" }, fakeFetch, async () => "oidc-token");
-  assert.equal(await onVercel?.("hi"), "ok");
-  assert.equal(calls.at(-1)?.auth, "Bearer oidc-token", "on Vercel it needs no secret at all");
-  assert.equal(calls.at(-1)?.body.model, "anthropic/claude-sonnet-5");
+  calls.length = 0;
+  const outage = createModel({ OPENROUTER_API_KEY: "or-key", VERCEL: "1" }, fetchWith((url) => (url.includes("openrouter") ? reply(502) : reply(200, "from the gateway"))), async () => "oidc-token");
+  assert.equal(await outage?.("hi"), "from the gateway", "an OpenRouter outage falls through to the AI Gateway");
+  assert.equal(calls.at(-1)?.auth, "Bearer oidc-token", "on Vercel the gateway needs no secret");
 
-  const failing = gatewayModel({ VERCEL: "1" }, (async () => new Response("nope", { status: 401 })) as unknown as typeof fetch, async () => "t");
-  await assert.rejects(() => failing!("hi"), /model_unavailable_401/, "an auth failure surfaces as a model failure, never as an answer");
+  calls.length = 0;
+  const freeTier = createModel({ VERCEL: "1" }, fetchWith((_url, model) => (model === "anthropic/claude-sonnet-5" ? reply(403) : reply(200, "fallback"))), async () => "t");
+  assert.equal(await freeTier?.("hi"), "fallback", "a model the plan cannot use falls back to one it can");
+  assert.deepEqual(calls.map((c) => c.model), ["anthropic/claude-sonnet-5", "openai/gpt-4.1-mini"]);
+
+  const keyed = createModel({ AI_GATEWAY_API_KEY: "k-123" }, fetchWith(() => reply(200)), async () => "oidc-should-not-be-used");
+  await keyed?.("hi");
+  assert.equal(calls.at(-1)?.auth, "Bearer k-123", "an explicit gateway key wins over the platform identity");
+
+  const failing = createModel({ VERCEL: "1" }, fetchWith(() => reply(401)), async () => "t");
+  await assert.rejects(() => failing!("hi"), /model_unavailable_401_401/, "when every provider fails it is a model failure, never an answer");
 });

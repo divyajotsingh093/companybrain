@@ -164,24 +164,75 @@ export function readHistory(raw: unknown): Turn[] {
     .slice(-MAX_HISTORY_TURNS);
 }
 
-export const modelName = (env: NodeJS.ProcessEnv): string => env.AI_GATEWAY_MODEL || "anthropic/claude-sonnet-5";
+const OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions";
+const GATEWAY_URL = "https://ai-gateway.vercel.sh/v1/chat/completions";
+const DEFAULT_MODEL = "anthropic/claude-sonnet-5";
+const FREE_TIER_MODEL = "openai/gpt-4.1-mini";
 
-export function gatewayModel(env: NodeJS.ProcessEnv, fetchImpl: typeof fetch = fetch, oidc: () => Promise<string> = getVercelOidcToken): Model | null {
-  const key = env.AI_GATEWAY_API_KEY;
-  if (!key && !env.VERCEL) return null;
-  const model = modelName(env);
-  return async (prompt: string) => {
-    const token = key || (await oidc());
-    const res = await fetchImpl("https://ai-gateway.vercel.sh/v1/chat/completions", {
-      method: "POST",
-      headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
-      body: JSON.stringify({ model, max_tokens: 900, messages: [{ role: "user", content: prompt }] }),
-      signal: AbortSignal.timeout(MODEL_TIMEOUT_MS),
+interface Provider {
+  name: string;
+  url: string;
+  model: string;
+  token: () => Promise<string>;
+  headers: Record<string, string>;
+}
+
+export function modelProviders(env: NodeJS.ProcessEnv, oidc: () => Promise<string> = getVercelOidcToken): Provider[] {
+  const list: Provider[] = [];
+  const openrouter = env.OPENROUTER_API_KEY;
+  if (openrouter) {
+    list.push({
+      name: "openrouter",
+      url: OPENROUTER_URL,
+      model: env.OPENROUTER_MODEL || DEFAULT_MODEL,
+      token: async () => openrouter,
+      headers: { "x-title": "Company Brain", ...(env.PUBLIC_URL ? { "http-referer": env.PUBLIC_URL } : {}) },
     });
-    if (!res.ok) throw new Error(`model_unavailable_${res.status}`);
-    const body = (await res.json()) as { choices?: Array<{ message?: { content?: string } }> };
-    const text = body.choices?.[0]?.message?.content;
-    if (!text) throw new Error("model_empty");
-    return text;
+  }
+  const key = env.AI_GATEWAY_API_KEY;
+  if (key || env.VERCEL) {
+    const token = async () => key || (await oidc());
+    const primary = env.AI_GATEWAY_MODEL || DEFAULT_MODEL;
+    const fallback = env.AI_GATEWAY_FALLBACK_MODEL || FREE_TIER_MODEL;
+    list.push({ name: "gateway", url: GATEWAY_URL, model: primary, token, headers: {} });
+    if (fallback !== primary) list.push({ name: "gateway", url: GATEWAY_URL, model: fallback, token, headers: {} });
+  }
+  return list;
+}
+
+export const modelName = (env: NodeJS.ProcessEnv): string => {
+  const first = modelProviders(env, async () => "")[0];
+  return first ? `${first.model} via ${first.name === "openrouter" ? "OpenRouter" : "Vercel AI Gateway"}` : DEFAULT_MODEL;
+};
+
+export function createModel(env: NodeJS.ProcessEnv, fetchImpl: typeof fetch = fetch, oidc: () => Promise<string> = getVercelOidcToken): Model | null {
+  const providers = modelProviders(env, oidc);
+  if (!providers.length) return null;
+  return async (prompt: string) => {
+    const failures: string[] = [];
+    for (const p of providers) {
+      try {
+        const res = await fetchImpl(p.url, {
+          method: "POST",
+          headers: { authorization: `Bearer ${await p.token()}`, "content-type": "application/json", ...p.headers },
+          body: JSON.stringify({ model: p.model, max_tokens: 900, messages: [{ role: "user", content: prompt }] }),
+          signal: AbortSignal.timeout(MODEL_TIMEOUT_MS),
+        });
+        if (!res.ok) {
+          failures.push(String(res.status));
+          console.error(`model ${p.name} ${p.model} failed with ${res.status}`);
+          continue;
+        }
+        const body = (await res.json()) as { choices?: Array<{ message?: { content?: string } }> };
+        const text = body.choices?.[0]?.message?.content;
+        if (text) return text;
+        failures.push("empty");
+        console.error(`model ${p.name} ${p.model} returned no text`);
+      } catch (err) {
+        failures.push(err instanceof Error && err.name === "TimeoutError" ? "timeout" : "network");
+        console.error(`model ${p.name} ${p.model} unreachable: ${err instanceof Error ? err.name : typeof err}`);
+      }
+    }
+    throw new Error(`model_unavailable_${failures.join("_")}`);
   };
 }
