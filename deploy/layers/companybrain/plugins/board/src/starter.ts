@@ -440,7 +440,7 @@ const agentRole = (a: StarterAgent): Item => ({
 export const HANDBOOK = "Company Brain handbook.md";
 export const AGREEMENT = "Agent working agreement.md";
 
-const documents = (c: Ctx, kit: Kit): Array<{ name: string; title: string; body: string }> => [
+const documents = (c: Ctx): Array<{ name: string; title: string; body: string }> => [
   {
     name: HANDBOOK,
     title: "Company Brain handbook",
@@ -475,7 +475,7 @@ Open Agents and connect Claude Code, Codex, Cursor or Grok. You get a token and 
 
 ## Starter agents
 
-The starter kit (${KITS[kit].label}) includes ready-made agent roles: ${agentsFor(kit).map((a) => a.name).join(", ")}. Each one owns an area, follows a skill, and knows what it must ask a person about first. Copy a kickoff prompt from the Agents screen into your agent to start one.
+The starter kit includes ready-made agent roles, listed on the Agents screen and under Roles. Each one owns an area, follows a skill, and knows what it must ask a person about first. Copy a kickoff prompt from the Agents screen into your agent to start one.
 
 ## Requests and decisions
 
@@ -529,7 +529,7 @@ export async function seedStarterKit(store: Store, profile: Profile, opts: { abo
     await store.putEntry({ kind: item.kind, ownerUid: profile.uid, name: item.name, body: (current) => (current === null ? item.body(ctx) : null) });
   }
   if (!everything) return;
-  for (const doc of documents(ctx, profile.kit)) await store.putUpload(profile.uid, doc.name, doc.title, doc.body, { createOnly: true });
+  for (const doc of documents(ctx)) await store.putUpload(profile.uid, doc.name, doc.title, doc.body, { createOnly: true });
 }
 
 const EMAIL = /^[A-Za-z0-9.!#$%&*+/=?^_`{|}~-]{1,64}@[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+$/;

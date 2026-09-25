@@ -481,7 +481,7 @@ ${boards}<form method="get" action="/board" class="panel"><label for="repo">Repo
 <h2>Active tokens</h2>${table}
 <h2>Recent agent activity</h2>${activity}
 <h2>Revoke everything</h2>
-<div class="panel danger-zone"><p>Revokes every agent token, signs you out, and deletes the stored GitHub authorization, your profile and your activity history. This cannot be undone.</p>
+<div class="panel danger-zone"><p>Revokes every agent token, signs you out, and deletes the stored GitHub authorization, your profile details and your activity history. What is in your brain stays until you delete it. This cannot be undone.</p>
 <form method="post" action="/tokens/revoke-all"><button class="button quiet danger" type="submit">Revoke all tokens and sign out</button></form></div>`,
     { signedIn: true, width: "reading" },
   );
@@ -646,7 +646,7 @@ ${text("company", "Company or team", "text", v.company, ` maxlength="100" autoco
 </form>${
       opts.editing
         ? ""
-        : `<div class="row" style="margin-top:18px"><form method="post" action="/auth/logout"><button class="button quiet" type="submit">Sign out</button></form><form method="post" action="/tokens/revoke-all"><button class="button quiet danger" type="submit">Revoke all tokens and sign out</button></form></div>`
+        : `<div class="row" style="margin-top:18px"><form method="post" action="/auth/logout"><button class="button quiet" type="submit">Sign out</button></form><form method="post" action="/tokens/revoke-all"><button class="button quiet danger" type="submit">Revoke all tokens and sign out</button></form></div><p class="hint" style="margin-top:8px">Revoking deletes every agent token and the stored GitHub authorization. It cannot be undone.</p>`
     }`,
     { signedIn: opts.editing, width: "reading" },
   );

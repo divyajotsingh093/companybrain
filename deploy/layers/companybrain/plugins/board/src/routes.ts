@@ -50,6 +50,7 @@ const REINDEX_GIVE_UP_MS = 30 * 24 * 3_600_000;
 const ASK_PER_DAY = 200;
 const SEED_WAIT_MS = 3_000;
 const PRIVACY_URL = "https://www.getvortic.com/privacy";
+const WELCOME_PER_MINUTE = 10;
 const SUGGEST_PER_MINUTE = 30;
 const REINDEX_BUDGET_MS = 150_000;
 const INDEX_PER_MINUTE = 6;
@@ -228,7 +229,7 @@ export function createApp(deps: AppDeps): Hono {
   const within = <T>(work: Promise<T>, fallback: T): Promise<T> =>
     Promise.race([work.catch(() => fallback), new Promise<T>((resolve) => setTimeout(() => resolve(fallback), SEED_WAIT_MS))]);
 
-  const tooFast = async (uid: number) => !(await limiter.allow(`welcome:${uid}`));
+  const tooFast = async (uid: number) => (await store.hit(`welcome:${uid}`, 60_000)) > WELCOME_PER_MINUTE;
 
   app.get("/welcome", async (c) => {
     const principal = await session(c);
