@@ -24,12 +24,12 @@ import { AUTHORIZE_PATH, CODE_TTL_MS, formActionFor, MAX_NEXT_LENGTH, issueCode,
 import { forgetReference, quietly, seedHarnessSkill, seedPerson, seedProject, seedReference } from "./seed.ts";
 import { AGREEMENT, agentCards, agentsFor, HANDBOOK, packsOf, readWelcome, seedStarterKit, type WelcomeInput } from "./starter.ts";
 import { GATE_MIN_GRADED, REFLECT_EVERY_MS, REFLECT_GOAL, REFLECTOR, reflectorRefusal, runGate } from "./improve.ts";
-import { type AgentProfile, CREATE_WRITES, LIBRARIAN, LIBRARIAN_GOAL, MAX_STEPS, profilesFor, RUN_DEADLINE_MS, runAgent } from "./runner.ts";
+import { ASSISTANT, type AgentProfile, CREATE_WRITES, LIBRARIAN, LIBRARIAN_GOAL, MAX_STEPS, profilesFor, RUN_DEADLINE_MS, runAgent } from "./runner.ts";
 import { isMemoryType, MEMORY_PURPOSE, parseMemory, renderMemory } from "./memory.ts";
 import { learnInto, PART_PURPOSE, parseSkill, pulse, renderSkill, SKILL_PARTS, STALE_AFTER_MS } from "./skills.ts";
 import { candidates, rank, type Signals } from "./suggest.ts";
-import { cleanLine, cleanText } from "./untrusted.ts";
-import { ACTIVE_AGENT_TOKENS_PER_USER, ENTRY_KINDS, type EntryKind, type GatewayOAuthRows, type Proposal, type RunStep, KIND_PURPOSE, MAX_DOC_BODY, MAX_ENTRY_BODY, MAX_ENTRY_NAME, MAX_UPLOAD_NAME, type Store } from "./store.ts";
+import { clamp, cleanLine, cleanText } from "./untrusted.ts";
+import { ACTIVE_AGENT_TOKENS_PER_USER, ENTRY_KINDS, type EntryKind, type GatewayOAuthRows, type Post, type Proposal, type RunStep, KIND_PURPOSE, MAX_DOC_BODY, MAX_ENTRY_BODY, MAX_ENTRY_NAME, MAX_UPLOAD_NAME, type Store } from "./store.ts";
 import { hashToken, isAgentClient, seal, unseal } from "./token.ts";
 import { type ErrorCode, isErrorCode, renderBoard, renderConnected, renderDenied, renderHome, renderConsent, renderMessage, renderTokenCreated } from "./web.ts";
 import { renderWelcome, WELCOME_CSP } from "./welcome.ts";
@@ -54,6 +54,9 @@ const AUTO_BUILDS_PER_CRON = 10;
 const MAX_GOAL = 2_000;
 const TEST_COST_IN_RUNS = 3;
 const LIBRARIAN_READS = 6;
+const REQUEST_ATTEMPTS = 2;
+const REQUEST_RUNS_PER_DAY = 20;
+const AUTO_REQUEST_MAX_AGE_MS = 14 * 86_400_000;
 const GATES_PER_CRON = 3;
 
 const SESSION_COOKIE = "cb_session";
@@ -634,7 +637,8 @@ export function createApp(deps: AppDeps): Hono {
       if (!canUseBoard(a.role)) return c.json({ error: "no_access" }, 404);
       const result = await store.addPost({ repoId: a.repoId, repoName: a.fullName, type: "task", title: payload.title, body, authorLogin: principal.login, authorUid: principal.uid, client: "web" });
       if (!result.ok) return c.json({ error: "rate_limited" }, 429);
-      return c.json({ id: result.post.id });
+      const started = await kickRequests(principal.uid, principal.login);
+      return c.json({ id: result.post.id, ...(started?.requestId === result.post.id ? { runId: started.runId } : {}) });
     } catch {
       return c.json({ error: "no_access" }, 404);
     }
@@ -644,13 +648,21 @@ export function createApp(deps: AppDeps): Hono {
     const principal = await session(c);
     if (!principal) return c.json({ error: "sign_in" }, 401);
     const read = canRead(principal);
+    if (c.req.query("pickup") === "1" && sameOrigin(c)) await kickRequests(principal.uid, principal.login);
     const tasks = await store.requestsBy(principal.uid);
     const repos = new Map(tasks.map((t) => [t.repoId, t.repoName]));
     const visible = new Map(await Promise.all([...repos].map(async ([id, name]) => [id, await read(name, id)] as const)));
+    const shown = tasks.filter((t) => visible.get(t.repoId) === true);
+    const runs = await store.requestRuns(principal.uid, shown.map((t) => t.id));
     const requests = await Promise.all(
-      tasks.filter((t) => visible.get(t.repoId) === true).map(async (t) => ({ ...t, updates: await store.workUpdates(t.id) })),
+      shown.map(async (t) => {
+        const updates = await store.workUpdates(t.id);
+        const run = runs.get(t.id) ?? null;
+        const stalled = t.status === "working" && updates.at(-1)?.client === "runner" && run?.status !== "running";
+        return { ...t, updates, run, stalled };
+      }),
     );
-    return c.json({ requests, now: now() });
+    return c.json({ requests, autoRequests: await store.autoRequests(principal.uid), canRun: model !== null, now: now() });
   });
 
   app.post("/api/app/work/review", jsonLimit, async (c) => {
@@ -1148,7 +1160,7 @@ export function createApp(deps: AppDeps): Hono {
     return profilesFor(profile ? agentsFor(profile.kit) : []);
   };
 
-  const executeRun = async (uid: number, login: string, id: string, profile: AgentProfile, goal: string, allowChanges: boolean): Promise<void> => {
+  const executeRun = async (uid: number, login: string, id: string, profile: AgentProfile, goal: string, allowChanges: boolean, forRequest: Post | null = null): Promise<void> => {
     const principal: Principal = { tokenId: `run:${id}`, uid, login, kind: "agent", client: profile.reflects ? "reflector" : "runner" };
     const skillsRead = new Set<string>();
     let reads = 0;
@@ -1182,6 +1194,11 @@ export function createApp(deps: AppDeps): Hono {
             const wanted = cleanLine(String(args.name ?? ""), MAX_ENTRY_NAME).toLowerCase();
             const taken = (await store.listEntries("lesson", uid)).some((l) => l.name.toLowerCase() === wanted);
             return taken ? "A lesson with that name already exists. Write a new lesson with its own name." : null;
+          }
+          if (forRequest && !readOnly) {
+            const refused = await requestRefusal(forRequest, tool, args);
+            if (refused) return refused;
+            if (!CREATE_WRITES.has(tool)) return null;
           }
           if (readOnly && profile.builds && ++reads > LIBRARIAN_READS) return "You have read enough. Write the entries the sources support now with brain_write, or finish.";
           if (readOnly) return null;
@@ -1448,12 +1465,98 @@ export function createApp(deps: AppDeps): Hono {
     return c.json({ tested: done.filter((d) => d.status === "fulfilled" && d.value).length });
   });
 
-  const startRun = async (uid: number, login: string, profile: AgentProfile, goal: string, allowChanges: boolean): Promise<string | null> => {
+  const startRun = async (uid: number, login: string, profile: AgentProfile, goal: string, allowChanges: boolean, request?: Post): Promise<string | null> => {
     const id = randomBytes(12).toString("base64url");
-    if (!(await store.createRun({ id, uid, agent: profile.id, goal, allowActions: allowChanges }))) return null;
-    defer(executeRun(uid, login, id, profile, goal, allowChanges).catch((err: unknown) => console.error(`agent run crashed: ${err instanceof Error ? err.name : typeof err}`)));
+    if (!(await store.createRun({ id, uid, agent: profile.id, goal, allowActions: allowChanges, ...(request ? { requestId: request.id } : {}) }))) return null;
+    defer(executeRun(uid, login, id, profile, goal, allowChanges, request ?? null).catch((err: unknown) => console.error(`agent run crashed: ${err instanceof Error ? err.name : typeof err}`)));
     return id;
   };
+
+  const requestRefusal = async (request: Post, tool: string, args: Record<string, unknown>): Promise<string | null> => {
+    const scope = "This run works on one request, so it can only report on that request, claim work and ask you in its repository, and add new brain entries.";
+    if (CREATE_WRITES.has(tool) || tool === "run_report") return null;
+    if (tool === "board_release") {
+      const claim = typeof args.post_id === "string" ? await store.getPost(args.post_id) : undefined;
+      return claim && claim.type === "claim" && claim.authorUid === request.authorUid && claim.client === "runner" && claim.repoName === request.repoName ? null : scope;
+    }
+    if (tool === "work_update") return args.task_id === request.id ? null : scope;
+    if (tool === "board_post") return args.type === "claim" && args.repo === request.repoName ? null : scope;
+    if (tool === "board_ask") return args.repo === request.repoName ? null : scope;
+    return scope;
+  };
+
+  const requestGoal = async (request: Post): Promise<string> => {
+    const changes = await store.latestChangeNote(request.id);
+    return clamp(
+      [
+        `Work on this request from ${request.authorLogin} on the repository ${request.repoName}. Its task id is ${request.id}.`,
+        `Request: ${request.title}`,
+        request.body ? `Details: ${clamp(request.body, 1_500)}` : "",
+        changes ? `The person reviewed an earlier attempt and asked for changes: ${clamp(changes, 1_000)}` : "",
+        `You can read the repository and the brain and add new brain entries, but you cannot change code, files or anything outside Company Brain.`,
+        `Steps: call board_read for ${request.repoName}. Report that you started with work_update kind progress. Do what your tools allow: research, answers, plans and new brain entries. If the request needs changes you cannot make, do not say you made them: submit a plan that says exactly what to change, where and why, and that a person or a coding agent must make it. When ready, call work_update kind submitted with what you did and how to check it. If it needs a decision only a person can make, ask with board_ask and stop.`,
+      ]
+        .filter(Boolean)
+        .join("\n"),
+      MAX_GOAL + 3_000,
+    );
+  };
+
+  const workRequest = async (uid: number, login: string, request: Post): Promise<string | null> => {
+    if (!model) return null;
+    if ((await store.hit(`request-runs:${uid}`, 86_400_000)) > REQUEST_RUNS_PER_DAY) return null;
+    return startRun(uid, login, ASSISTANT, await requestGoal(request), false, request);
+  };
+
+  const workNextRequest = async (uid: number, login: string): Promise<{ runId: string; requestId: string } | null> => {
+    if (!model || !(await store.autoRequests(uid)) || (await store.hasRunningRun(uid))) return null;
+    const next = await store.nextWaitingRequest(uid, REQUEST_ATTEMPTS, now() - AUTO_REQUEST_MAX_AGE_MS);
+    const runId = next ? await workRequest(uid, login, next) : null;
+    return next && runId ? { runId, requestId: next.id } : null;
+  };
+
+  const kickRequests = (uid: number, login: string) =>
+    workNextRequest(uid, login).catch((err: unknown) => {
+      console.error(`request pickup failed: ${err instanceof Error ? err.name : typeof err}`);
+      return null;
+    });
+
+  app.post("/api/app/requests/:id/run", jsonLimit, async (c) => {
+    const principal = await session(c);
+    if (!principal) return c.json({ error: "sign_in" }, 401);
+    if (!sameOrigin(c)) return c.json({ error: "blocked" }, 403);
+    if (!model) return c.json({ error: "no_model" }, 503);
+    const request = await store.waitingRequest(principal.uid, c.req.param("id"));
+    if (!request) return c.json({ error: "wrong_state" }, 409);
+    if (await store.hasRunningRun(principal.uid)) return c.json({ error: "busy" }, 409);
+    if ((await store.hit(`runs:${principal.uid}`, 86_400_000)) > RUNS_PER_DAY) return c.json({ error: "rate_limited" }, 429);
+    const id = await startRun(principal.uid, principal.login, ASSISTANT, await requestGoal(request), false, request);
+    return id ? c.json({ id }, 202) : c.json({ error: "busy" }, 409);
+  });
+
+  app.post("/api/app/requests/auto", jsonLimit, async (c) => {
+    const principal = await session(c);
+    if (!principal) return c.json({ error: "sign_in" }, 401);
+    if (!sameOrigin(c)) return c.json({ error: "blocked" }, 403);
+    const on = ((await c.req.json().catch(() => null)) as { on?: unknown } | null)?.on;
+    if (typeof on !== "boolean") return c.json({ error: "bad_fields" }, 400);
+    await store.setAutoRequests(principal.uid, on);
+    const started = on ? await kickRequests(principal.uid, principal.login) : null;
+    return c.json({ autoRequests: on, ...(started ? { runId: started.runId } : {}) });
+  });
+
+  app.get("/cron/requests", async (c) => {
+    if (!cronAuthorized(c)) return c.text("Not found.", 404);
+    if (!model) return c.json({ started: 0, reason: "no_model" });
+    const uids = await store.usersWithWaitingRequests(REQUEST_ATTEMPTS, now() - AUTO_REQUEST_MAX_AGE_MS, AUTO_BUILDS_PER_CRON);
+    const started = await Promise.all(
+      uids.map(async (uid) => {
+        const cred = await store.credential(uid);
+        return cred ? kickRequests(uid, cred.login) : null;
+      }),
+    );
+    return c.json({ started: started.filter(Boolean).length });
+  });
 
   app.get("/api/app/runs", async (c) => {
     const principal = await session(c);

@@ -927,8 +927,8 @@ export function App(): JSX.Element {
     );
   };
 
-  const loadWork = (): void => {
-    void get<Work>("/api/app/work").then(
+  const loadWork = (pickup = screen === "work"): void => {
+    void get<Work>(pickup ? "/api/app/work?pickup=1" : "/api/app/work").then(
       (next) => {
         setWork(next);
         setWorkError(null);
@@ -963,7 +963,7 @@ export function App(): JSX.Element {
       .finally(() => setLoading(false));
     loadBrain();
     loadDecisions();
-    loadWork();
+    loadWork(false);
     loadSources();
   }, []);
 
@@ -984,7 +984,7 @@ export function App(): JSX.Element {
     setFailed(null);
     setScreen(next);
     loadDecisions();
-    loadWork();
+    loadWork(next === "work");
     if (next === "sources" || next === "ask" || next === "home") loadSources();
     if (isEntryKind(next) || next === "home") loadBrain();
   };

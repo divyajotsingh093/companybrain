@@ -20,6 +20,10 @@
     {
       "path": "/cron/gate",
       "schedule": "37 7 * * *"
+    },
+    {
+      "path": "/cron/requests",
+      "schedule": "17 8 * * *"
     }
   ]
 }

@@ -701,6 +701,9 @@ const SCHEMA = `
     built_at BIGINT
   );
   ALTER TABLE brain_settings ADD COLUMN IF NOT EXISTS improve BOOLEAN NOT NULL DEFAULT false;
+  ALTER TABLE brain_settings ADD COLUMN IF NOT EXISTS auto_requests BOOLEAN NOT NULL DEFAULT true;
+  ALTER TABLE agent_runs ADD COLUMN IF NOT EXISTS request_id TEXT;
+  CREATE INDEX IF NOT EXISTS agent_runs_request ON agent_runs (request_id, created_at) WHERE request_id IS NOT NULL;
   ALTER TABLE brain_settings ADD COLUMN IF NOT EXISTS reflected_at BIGINT;
   ALTER TABLE entries ADD COLUMN IF NOT EXISTS author TEXT;
   ALTER TABLE entries ADD COLUMN IF NOT EXISTS human_edited BOOLEAN NOT NULL DEFAULT false;
@@ -817,7 +820,7 @@ export function openStore(db: Database, now: () => number = Date.now) {
       .transaction(async (tx) => {
         await tx.query(`SET LOCAL lock_timeout = '10s'`);
         const current = async () =>
-          (await tx.query<{ ok: boolean }>(`SELECT to_regclass('rate_limits') IS NOT NULL AND to_regclass('posts_open') IS NOT NULL AND to_regclass('audit_log_at') IS NOT NULL AND to_regclass('board_events_repo_id') IS NOT NULL AND to_regclass('entries_listing') IS NOT NULL AND to_regclass('posts_open_decisions') IS NOT NULL AND to_regclass('documents_search_v2') IS NOT NULL AND to_regclass('entries_search') IS NOT NULL AND to_regclass('links_incoming') IS NOT NULL AND to_regclass('work_updates_task') IS NOT NULL AND to_regclass('gateway_servers') IS NOT NULL AND to_regclass('suggestion_events_uid') IS NOT NULL AND to_regclass('profiles') IS NOT NULL AND to_regclass('gateway_oauth_state') IS NOT NULL AND to_regclass('agent_runs_uid') IS NOT NULL AND to_regclass('brain_settings') IS NOT NULL AND to_regclass('agent_runs_one_running') IS NOT NULL AND to_regclass('entry_versions_entry') IS NOT NULL AND to_regclass('outcomes_uid') IS NOT NULL AND to_regclass('proposals_uid') IS NOT NULL AND to_regclass('entries_human') IS NOT NULL AND to_regclass('proposals_applied') IS NOT NULL AS ok`)).rows[0]?.ok;
+          (await tx.query<{ ok: boolean }>(`SELECT to_regclass('rate_limits') IS NOT NULL AND to_regclass('posts_open') IS NOT NULL AND to_regclass('audit_log_at') IS NOT NULL AND to_regclass('board_events_repo_id') IS NOT NULL AND to_regclass('entries_listing') IS NOT NULL AND to_regclass('posts_open_decisions') IS NOT NULL AND to_regclass('documents_search_v2') IS NOT NULL AND to_regclass('entries_search') IS NOT NULL AND to_regclass('links_incoming') IS NOT NULL AND to_regclass('work_updates_task') IS NOT NULL AND to_regclass('gateway_servers') IS NOT NULL AND to_regclass('suggestion_events_uid') IS NOT NULL AND to_regclass('profiles') IS NOT NULL AND to_regclass('gateway_oauth_state') IS NOT NULL AND to_regclass('agent_runs_uid') IS NOT NULL AND to_regclass('brain_settings') IS NOT NULL AND to_regclass('agent_runs_one_running') IS NOT NULL AND to_regclass('entry_versions_entry') IS NOT NULL AND to_regclass('outcomes_uid') IS NOT NULL AND to_regclass('proposals_uid') IS NOT NULL AND to_regclass('entries_human') IS NOT NULL AND to_regclass('proposals_applied') IS NOT NULL AND to_regclass('agent_runs_request') IS NOT NULL AS ok`)).rows[0]?.ok;
         if (await current()) return;
         await lock(tx, "companybrain-board:schema");
         if (await current()) return;
@@ -1716,12 +1719,12 @@ export function openStore(db: Database, now: () => number = Date.now) {
   const RUN_COLUMNS = `id, uid, agent, goal, status, steps, answer, allow_actions AS "allowActions", created_at AS "createdAt", updated_at AS "updatedAt"`;
   const toRun = (r: AgentRun & { steps: RunStep[] | string }): AgentRun => ({ ...r, steps: typeof r.steps === "string" ? (JSON.parse(r.steps) as RunStep[]) : r.steps });
 
-  async function createRun(run: { id: string; uid: number; agent: string; goal: string; allowActions: boolean }): Promise<boolean> {
+  async function createRun(run: { id: string; uid: number; agent: string; goal: string; allowActions: boolean; requestId?: string }): Promise<boolean> {
     const t = now();
     await settleStaleRuns(run.uid);
     return (await changed(
-      `INSERT INTO agent_runs (id, uid, agent, goal, status, allow_actions, created_at, updated_at)
-       VALUES ($1, $2, $3, $4, 'running', $5, $6, $6) ON CONFLICT (uid) WHERE status = 'running' DO NOTHING`,
+      `INSERT INTO agent_runs (id, uid, agent, goal, status, allow_actions, created_at, updated_at, request_id)
+       VALUES ($1, $2, $3, $4, 'running', $5, $6, $6, $7) ON CONFLICT (uid) WHERE status = 'running' DO NOTHING`,
       [
       run.id,
       run.uid,
@@ -1729,7 +1732,63 @@ export function openStore(db: Database, now: () => number = Date.now) {
       run.goal,
       run.allowActions ? "true" : "false",
       t,
+      run.requestId ?? null,
     ])) > 0;
+  }
+
+  const STALLED_BY_RUNNER = `(p.status = 'working'
+    AND (SELECT u.client FROM work_updates u WHERE u.task_id = p.id ORDER BY u.seq DESC LIMIT 1) = 'runner'
+    AND NOT EXISTS (SELECT 1 FROM agent_runs r WHERE r.request_id = p.id AND r.status = 'running'))`;
+  const WAITING_REQUEST = `p.type = 'task' AND p.closed_at IS NULL AND (COALESCE(p.status, 'open') IN ('open', 'changes') OR ${STALLED_BY_RUNNER})`;
+  const ATTEMPTS = `(SELECT COUNT(*) FROM agent_runs r WHERE r.request_id = p.id AND r.created_at > COALESCE((SELECT MAX(u.at) FROM work_updates u WHERE u.task_id = p.id AND u.kind = 'changes'), 0))`;
+
+  async function nextWaitingRequest(uid: number, maxAttempts: number, since = 0): Promise<Post | undefined> {
+    await settleStaleRuns(uid);
+    const row = await first<PostRow>(`SELECT p.* FROM posts p WHERE p.author_uid = $1 AND ${WAITING_REQUEST} AND ${ATTEMPTS} < $2 AND p.created_at > $3 ORDER BY p.created_at ASC LIMIT 1`, [uid, maxAttempts, since]);
+    return row ? toPost(row) : undefined;
+  }
+
+  async function waitingRequests(uid: number, limit: number): Promise<Post[]> {
+    return (await rows<PostRow>(`SELECT p.* FROM posts p WHERE p.author_uid = $1 AND ${WAITING_REQUEST} ORDER BY p.created_at ASC LIMIT $2`, [uid, limit])).map(toPost);
+  }
+
+  async function waitingRequest(uid: number, id: string): Promise<Post | undefined> {
+    await settleStaleRuns(uid);
+    const row = await first<PostRow>(`SELECT p.* FROM posts p WHERE p.author_uid = $1 AND p.id::text = $2 AND ${WAITING_REQUEST}`, [uid, id]);
+    return row ? toPost(row) : undefined;
+  }
+
+  async function latestChangeNote(taskId: string): Promise<string | null> {
+    return (await first<{ body: string }>(`SELECT body FROM work_updates WHERE task_id = $1 AND kind = 'changes' ORDER BY seq DESC LIMIT 1`, [taskId]))?.body ?? null;
+  }
+
+  async function usersWithWaitingRequests(maxAttempts: number, since: number, limit: number): Promise<number[]> {
+    return (
+      await rows<{ uid: number }>(
+        `SELECT uid FROM (SELECT DISTINCT p.author_uid AS uid FROM posts p LEFT JOIN brain_settings b ON b.uid = p.author_uid
+           WHERE ${WAITING_REQUEST} AND COALESCE(b.auto_requests, true) AND p.created_at > $2 AND ${ATTEMPTS} < $1) waiting
+         ORDER BY random() LIMIT $3`,
+        [maxAttempts, since, limit],
+      )
+    ).map((r) => r.uid);
+  }
+
+  async function requestRuns(uid: number, ids: string[]): Promise<Map<string, { id: string; status: RunStatus; createdAt: number }>> {
+    if (!ids.length) return new Map();
+    await settleStaleRuns(uid);
+    const list = await rows<{ requestId: string; id: string; status: RunStatus; createdAt: number }>(
+      `SELECT DISTINCT ON (request_id) request_id AS "requestId", id, status, created_at AS "createdAt" FROM agent_runs WHERE uid = $1 AND request_id = ANY($2::text[]) ORDER BY request_id, created_at DESC`,
+      [uid, `{${ids.join(",")}}`],
+    );
+    return new Map(list.map((r) => [r.requestId, { id: r.id, status: r.status, createdAt: r.createdAt }]));
+  }
+
+  async function autoRequests(uid: number): Promise<boolean> {
+    return (await first<{ enabled: boolean }>(`SELECT auto_requests AS enabled FROM brain_settings WHERE uid = $1`, [uid]))?.enabled ?? true;
+  }
+
+  async function setAutoRequests(uid: number, on: boolean): Promise<void> {
+    await changed(`INSERT INTO brain_settings (uid, auto_build, auto_requests) VALUES ($1, false, $2) ON CONFLICT (uid) DO UPDATE SET auto_requests = EXCLUDED.auto_requests`, [uid, on ? "true" : "false"]);
   }
 
   async function addRunStep(id: string, step: RunStep): Promise<void> {
@@ -2101,6 +2160,14 @@ export function openStore(db: Database, now: () => number = Date.now) {
     claimAutoBuilds,
     releaseAutoBuild,
     hasRunningRun,
+    nextWaitingRequest,
+    waitingRequest,
+    latestChangeNote,
+    waitingRequests,
+    usersWithWaitingRequests,
+    requestRuns,
+    autoRequests,
+    setAutoRequests,
     withGatewayOAuthLock,
     startGatewayOAuth,
     saveGatewayOAuth,

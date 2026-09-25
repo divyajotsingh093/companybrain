@@ -1,4 +1,4 @@
-import { useState, type JSX } from "react";
+import { useEffect, useState, type JSX } from "react";
 import { AlertBanner, Button, Caption, Card, EmptyState, Heading, Select, Stack, StatusBadge, Text, TextArea, TextInput, tokens, usePal } from "./ui";
 import { ApiError, clientName, EASE, THEME, injectCss, post, reason, when } from "./shared";
 
@@ -25,10 +25,14 @@ export interface WorkRequest {
   closedAt: number | null;
   resolution: string | null;
   updates: WorkUpdate[];
+  run?: { id: string; status: "running" | "done" | "stopped" | "failed"; createdAt: number } | null;
+  stalled?: boolean;
 }
 
 export interface Work {
   requests: WorkRequest[];
+  autoRequests?: boolean;
+  canRun?: boolean;
   now: number;
 }
 
@@ -55,6 +59,10 @@ interface Notice {
   title: string;
   description?: string;
 }
+
+const AGENT_WORKING = { label: "An agent is working on it", badge: "accent", tone: "accent" as Tone };
+
+const running = (r: WorkRequest): boolean => r.run?.status === "running";
 
 function statusOf(r: WorkRequest): WorkStatus | "closed" {
   return r.closedAt !== null && r.status !== "done" ? "closed" : r.status;
@@ -143,6 +151,40 @@ export function WorkScreen({ view, login, repos, onChanged, seed }: { view: Work
   const [notes, setNotes] = useState<Record<string, string>>({});
   const [busy, setBusy] = useState<string | null>(null);
   const [notice, setNotice] = useState<Notice | null>(null);
+  const [auto, setAuto] = useState(view.autoRequests !== false);
+  const anyRunning = view.requests.some(running);
+
+  useEffect(() => {
+    if (!anyRunning) return;
+    const timer = setInterval(onChanged, 4_000);
+    return () => clearInterval(timer);
+  }, [anyRunning]);
+
+  const runNow = async (r: WorkRequest): Promise<void> => {
+    if (busy) return;
+    setBusy(`${r.id}:run`);
+    setNotice(null);
+    try {
+      await post<{ id: string }>(`/api/app/requests/${encodeURIComponent(r.id)}/run`, {});
+      setNotice({ variant: "success", title: `An agent started on "${r.title}"`, description: "Its progress shows here, and you review the result when it is submitted." });
+      onChanged();
+    } catch (err) {
+      setNotice({ variant: "danger", title: reason(err) });
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const switchAuto = async (on: boolean): Promise<void> => {
+    setAuto(on);
+    try {
+      await post<{ autoRequests: boolean }>("/api/app/requests/auto", { on });
+      onChanged();
+    } catch (err) {
+      setAuto(!on);
+      setNotice({ variant: "danger", title: reason(err) });
+    }
+  };
 
   const review = view.requests.filter((r) => statusOf(r) === "review");
   const active = view.requests.filter((r) => ["open", "working", "changes"].includes(statusOf(r)));
@@ -153,8 +195,16 @@ export function WorkScreen({ view, login, repos, onChanged, seed }: { view: Work
     setSending(true);
     setFormError(null);
     try {
-      await post<{ id: string }>("/api/app/requests", { repo, title: title.trim(), body: detail.trim() });
-      setNotice({ variant: "success", title: `Requested "${title.trim()}" in ${repo}`, description: "Agents working in that repository pick it up from its board. Their progress shows up here." });
+      const created = await post<{ id: string; runId?: string }>("/api/app/requests", { repo, title: title.trim(), body: detail.trim() });
+      setNotice({
+        variant: "success",
+        title: `Requested "${title.trim()}" in ${repo}`,
+        description: created.runId
+          ? "An agent picked it up straight away. Its progress shows up here."
+          : auto
+            ? "An agent picks it up as soon as one is free. Connected agents also see it in their inbox."
+            : "Automatic pickup is off, so start an agent on it below, or let a connected agent pick it up from its inbox.",
+      });
       setTitle("");
       setDetail("");
       setCreating(false);
@@ -194,7 +244,9 @@ export function WorkScreen({ view, login, repos, onChanged, seed }: { view: Work
     <Card theme={THEME} padding={0}>
       {items.map((r, i) => {
         const open = openIds.includes(r.id);
-        const s = STATUS[statusOf(r)];
+        const s = running(r) ? AGENT_WORKING : STATUS[statusOf(r)];
+        const stalled = r.stalled === true;
+        const startable = !running(r) && (["open", "changes"].includes(statusOf(r)) || stalled) && view.canRun !== false;
         return (
           <div key={r.id} style={{ borderBottom: i < items.length - 1 ? `1px solid ${pal.borderSubtle}` : "none" }}>
             <button type="button" className="cb-work-row" aria-expanded={open} onClick={() => toggle(r.id)}>
@@ -207,8 +259,20 @@ export function WorkScreen({ view, login, repos, onChanged, seed }: { view: Work
               </StatusBadge>
             </button>
             {open ? (
-              <div style={{ padding: "4px 16px 16px" }}>
+              <div style={{ padding: "4px 16px 16px", display: "grid", gap: 12 }}>
                 <Timeline request={r} login={login} now={view.now} />
+                {r.run && !running(r) && (statusOf(r) === "open" || stalled) ? (
+                  <Text secondary theme={THEME} style={tokens.type.sm}>
+                    {`The last agent run ${r.run.status === "done" ? "finished without submitting it" : r.run.status === "failed" ? "failed" : "stopped"}. See it under Run agents, or try again.`}
+                  </Text>
+                ) : null}
+                {startable ? (
+                  <div>
+                    <Button variant="secondary" size="sm" theme={THEME} disabled={busy !== null || anyRunning} onClick={() => void runNow(r)}>
+                      {busy === `${r.id}:run` ? "Starting" : anyRunning ? "Another agent run is going" : "Run an agent on this"}
+                    </Button>
+                  </div>
+                ) : null}
               </div>
             ) : null}
           </div>
@@ -242,6 +306,13 @@ export function WorkScreen({ view, login, repos, onChanged, seed }: { view: Work
           {creating ? "Close" : "New request"}
         </Button>
       </Stack>
+
+      <label style={{ display: "flex", gap: 10, alignItems: "flex-start", cursor: "pointer", color: pal.textSecondary, ...tokens.type.sm }}>
+        <input id="auto-requests" type="checkbox" checked={auto} onChange={(e) => void switchAuto(e.target.checked)} style={{ width: 16, height: 16, marginTop: 2, accentColor: "#0fae93" }} />
+        <span>
+          Work requests automatically when an agent is free. An in-app agent picks up each new request, reports progress and submits the result for your review. It can read your repositories and brain, add new brain entries, and ask you questions. It cannot change code, so for code changes it submits a plan for you or a coding agent.
+        </span>
+      </label>
 
       {notice ? (
         <div aria-live="polite">

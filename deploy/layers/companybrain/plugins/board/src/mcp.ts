@@ -383,7 +383,7 @@ export function createBoardServer(deps: BoardDeps): McpServer {
     "board_inbox",
     {
       description:
-        "What is waiting for you across every repository you can reach: handoffs addressed to you or to this client, and your own claims about to expire. Call it at the start of a session.",
+        "What is waiting for you across every repository you can reach: requests this person made that no agent has started, handoffs addressed to you or to this client, and your own claims about to expire. Call it at the start of a session.",
       inputSchema: { limit: z.number().int().min(1).max(50).optional() },
       annotations: { readOnlyHint: true },
     },
@@ -418,13 +418,15 @@ export function createBoardServer(deps: BoardDeps): McpServer {
         const revise = await keep(await store.changesRequestedFor(principal.uid, principal.client, limit ?? 20));
         const handoffs = await keep(found.handoffs);
         const expiring = await keep(found.expiring);
-        if (!handoffs.length && !expiring.length && !answered.length && !revise.length) return text("Nothing is waiting for you.");
+        const waiting = await keep(await store.waitingRequests(principal.uid, limit ?? 20));
+        if (!handoffs.length && !expiring.length && !answered.length && !revise.length && !waiting.length) return text("Nothing is waiting for you.");
         const fence = createFence();
         const section = (title: string, posts: Post[]) =>
           posts.length ? `## ${title}\n\n${posts.map((p) => renderPost(p, fence)).join("\n\n")}` : "";
         return text(
           [
             revise.length ? `## Changes requested on work you submitted\n\n${await reviewNotes(revise, fence)}` : "",
+            section("Requests waiting for an agent: pick one up with work_update", waiting.filter((p) => (p.status ?? "open") === "open")),
             section("Answers to what you asked", answered),
             section("Handed off to you", handoffs),
             section("Your claims expiring soon", expiring),
