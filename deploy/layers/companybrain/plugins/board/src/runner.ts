@@ -21,6 +21,7 @@ export interface AgentProfile {
   tools?: readonly string[];
   builds?: boolean;
   reflects?: boolean;
+  maxSteps?: number;
 }
 
 export const CREATE_WRITES: ReadonlySet<string> = new Set(["brain_write", "memory_save"]);
@@ -141,7 +142,10 @@ export async function runAgent(opts: {
     .join("\n");
   const fence = createFence();
   const history: string[] = [];
-  const limit = opts.maxSteps ?? MAX_STEPS;
+  const changes: string[] = [];
+  const limit = opts.maxSteps ?? profile.maxSteps ?? MAX_STEPS;
+  const ledger = (): string =>
+    changes.length ? `\n\nChanges this run made:\n${changes.map((c) => `- ${c}`).join("\n")}` : "\n\nThis run made no changes.";
   for (let step = 0; step < limit; step++) {
     const last = step === limit - 1;
     const prompt = [
@@ -160,7 +164,7 @@ export async function runAgent(opts: {
       continue;
     }
     if ("final" in action) {
-      const answer = clamp(action.final.trim() || "The agent finished without a summary.", 6_000);
+      const answer = clamp(action.final.trim() || "The agent finished without a summary.", 6_000) + ledger();
       await record({ kind: "final", text: answer });
       return { status: "done", answer };
     }
@@ -178,9 +182,13 @@ export async function runAgent(opts: {
     const text = (result.content ?? []).map((c) => (c.type === "text" ? (c.text ?? "") : `[${c.type} content]`)).join("\n") || "(no output)";
     await record({ kind: "result", tool: action.tool, text: clamp(text, STEP_TEXT), ok: result.isError !== true });
     await opts.onCall?.(action.tool, action.arguments, result.isError !== true);
+    if (!known?.annotations?.readOnlyHint && result.isError !== true && !shadow) {
+      const a = action.arguments;
+      changes.push(cleanLine(`${action.tool}${typeof a.kind === "string" ? ` ${a.kind}` : ""}${typeof a.name === "string" ? ` "${a.name}"` : ""}`, 160));
+    }
     history.push(`Step ${step + 1}: you called ${action.tool} with ${clamp(args, 600)}.${result.isError ? " It failed." : ""} Result:\n${fence.wrap(`tool:${action.tool}`, clamp(text, RESULT_CHARS))}`);
   }
-  const answer = `Stopped after ${limit} steps without a final answer. The steps above show how far it got.`;
+  const answer = `Stopped after ${limit} steps without a final answer. The steps above show how far it got.${ledger()}`;
   await record({ kind: "final", text: answer });
   return { status: "stopped", answer };
 }
@@ -197,12 +205,14 @@ export const LIBRARIAN: AgentProfile = {
   instructions: [
     "You are the Librarian for this company's shared brain. Your job is to keep the brain complete, so every agent and person finds what they need.",
     "Start with memory_index and brain_search to see what exists. Use list_repos, repo_overview, search_code, get_file and brain_read to learn from the company's own sources.",
-    "Write only what the sources support. Never invent policy. Never replace an existing entry: pick a new, specific name, or skip it.",
+    "Read at most five sources, then start writing: each brain_write is one step, and you have a limited number. Write only what the sources support. Never invent policy. Never replace an existing entry: pick a new, specific name, or skip it.",
+    "Your final answer must list only entries you actually wrote with brain_write or memory_save.",
     "Prefer processes (how recurring work gets done), rules (what is allowed and who approves), roles (who owns what), lessons (what went wrong and what to do instead) and records (facts worth keeping). Keep each entry short and concrete, and link related entries with [[Name]].",
   ].join("\n"),
   suggestions: [LIBRARIAN_GOAL, "Write down the release process from what the repositories show, as a process entry.", "Find rules hidden in the code and docs, such as who approves what, and record them."],
   tools: ["whoami", "memory_index", "memory_save", "brain_search", "brain_read", "brain_links", "brain_write", "skill_read", "list_repos", "repo_overview", "search_code", "get_file"],
   builds: true,
+  maxSteps: 16,
 };
 
 export const ASSISTANT: AgentProfile = {

@@ -59,7 +59,7 @@ test("an agent runs inside the platform, using the same tools a connected agent 
 
   const run = await runOnce(env, { agent: "assistant", goal: "Learn one thing and save it." });
   assert.equal(run.status, "done");
-  assert.equal(run.answer, "I loaded memory and saved one lesson.");
+  assert.equal(run.answer, 'I loaded memory and saved one lesson.\n\nChanges this run made:\n- brain_write lesson "Runner lesson"', "the answer ends with what the run actually changed");
   assert.deepEqual(run.steps.map((s) => s.kind), ["thought", "call", "result", "thought", "call", "result", "thought", "final"]);
   assert.ok(await env.h.store.getEntry("lesson", 1, "Runner lesson"), "the agent's write reached the brain");
   assert.match(prompts[1] as string, /<untrusted-[0-9a-f]{16} source="tool:memory_index">/, "tool results reach the model fenced as data");
@@ -164,7 +164,7 @@ test("a reply cut off mid-JSON is retried, never saved as the answer", async () 
   const env = await harness(['{"thought": "write it", "tool": "brain_write", "arguments": {"kind": "rule", "name": "Half', '{"final": "Wrote nothing this time."}']);
   const run = await runOnce(env, { agent: "assistant", goal: "Write a rule." });
   assert.equal(run.status, "done");
-  assert.equal(run.answer, "Wrote nothing this time.");
+  assert.equal(run.answer, "Wrote nothing this time.\n\nThis run made no changes.", "a run cannot claim changes it did not make");
   assert.equal(run.steps[0]?.kind, "error");
 });
 
