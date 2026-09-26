@@ -20,6 +20,7 @@ import type { RateLimiter } from "./limits.ts";
 import { APP_JS_BASE64 } from "./app-bundle.ts";
 import { FAVICON } from "./brand.ts";
 import { createBoardServer, describeError, TOOL_NAMES } from "./mcp.ts";
+import { createPipedreamAdapter, pipedreamGatewayUrl, pipedreamSlug, PIPEDREAM_MCP_URL } from "./pipedream.ts";
 import { AUTHORIZE_PATH, CODE_TTL_MS, formActionFor, MAX_NEXT_LENGTH, issueCode, metadata, NEXT_TTL_MS, readClient, redeemCode, redirectAllowed, registerClient, resourceAllowed, validChallenge, withParams } from "./oauth.ts";
 import { forgetReference, quietly, seedHarnessSkill, seedPerson, seedProject, seedReference } from "./seed.ts";
 import { AGREEMENT, agentCards, agentsFor, HANDBOOK, packsOf, readWelcome, seedStarterKit, type WelcomeInput } from "./starter.ts";
@@ -719,6 +720,7 @@ export function createApp(deps: AppDeps): Hono {
   });
 
   const upstreamFetch = deps.gatewayFetch ?? publicFetch;
+  const pipedream = config.pipedream ? createPipedreamAdapter({ config: config.pipedream, fetch: upstreamFetch, now }) : null;
   const oauthCallbackUrl = `${config.publicUrl}/gateway/oauth/callback`;
   const storedRows = (uid: number, name: string): GatewayOAuthRows => ({
     read: () => store.gatewayOAuth(uid, name),
@@ -739,6 +741,12 @@ export function createApp(deps: AppDeps): Hono {
   const upstreamFor = (uid: number) => async (name: string) => {
     const g = await store.gateway(uid, name);
     if (!g) return null;
+    if (g.auth === "pipedream") {
+      const target = new URL(g.url);
+      const slug = target.searchParams.get("app") ?? "";
+      if (!pipedream || config.pipedream?.environment !== "development" || target.origin + target.pathname !== PIPEDREAM_MCP_URL || !pipedreamSlug(slug) || target.href !== pipedreamGatewayUrl(slug)) throw new Error("Invalid Pipedream connection");
+      return pipedream.open(uid, slug);
+    }
     if (g.auth !== "oauth") return openUpstream({ url: g.url, sealedToken: g.tokenSealed, secret: config.secret, fetch: upstreamFetch });
     await refreshIfDue(uid, name, g.url);
     return openUpstream({ url: g.url, sealedToken: null, secret: config.secret, fetch: upstreamFetch, authProvider: providerFor(storedRows(uid, name), g.url, true).provider });
@@ -775,6 +783,7 @@ export function createApp(deps: AppDeps): Hono {
     const name = typeof payload?.name === "string" ? payload.name.trim().toLowerCase() : "";
     const url = typeof payload?.url === "string" ? payload.url.trim() : "";
     if (!GATEWAY_NAME.test(name) || !url || url.length > 500) return c.json({ error: "bad_fields" }, 400);
+    if (name.startsWith("pd-")) return c.json({ error: "reserved_name" }, 400);
     const problem = gatewayUrlProblem(url);
     if (problem) return c.json({ error: "bad_url", message: problem }, 400);
     if ((await store.hit(`gateway-add:${principal.uid}`, 60_000)) > 10) return c.json({ error: "rate_limited" }, 429);
@@ -825,7 +834,26 @@ export function createApp(deps: AppDeps): Hono {
     const servers = await Promise.all(
       listed.map(async (g) => ({ ...g, signedIn: g.auth === "oauth" ? await providerFor(storedRows(principal.uid, g.name), g.url, true).signedIn() : true })),
     );
-    return c.json({ servers, calls, max: MAX_GATEWAYS, model: { configured: model !== null, summary: modelSummary(process.env), dailyLimit: ASK_PER_DAY }, mcpUrl: `${config.publicUrl}/mcp`, now: now() });
+    return c.json({ servers, calls, max: MAX_GATEWAYS, model: { configured: model !== null, summary: modelSummary(process.env), dailyLimit: ASK_PER_DAY }, mcpUrl: `${config.publicUrl}/mcp`, pipedreamAvailable: Boolean(pipedream && config.pipedream?.environment === "development"), now: now() });
+  });
+
+  // Explicit per-user, per-app opt-in. No third-party account is connected by this step:
+  // Pipedream returns its Connect Link when an authorized tool needs an account.
+  app.post("/api/app/gateway/pipedream", jsonLimit, async (c) => {
+    const principal = await session(c);
+    if (!principal) return c.json({ error: "sign_in" }, 401);
+    if (!sameOrigin(c)) return c.json({ error: "blocked" }, 403);
+    if (!pipedream) return c.json({ error: "not_configured" }, 503);
+    if (config.pipedream?.environment !== "development") return c.json({ error: "production_not_enabled" }, 403);
+    const payload = (await c.req.json().catch(() => null)) as { app?: unknown } | null;
+    const slug = typeof payload?.app === "string" ? payload.app.trim().toLowerCase() : "";
+    if (!pipedreamSlug(slug)) return c.json({ error: "bad_app" }, 400);
+    const name = `pd-${slug}`;
+    if (!GATEWAY_NAME.test(name)) return c.json({ error: "bad_app" }, 400);
+    if ((await store.hit(`gateway-add:${principal.uid}`, 60_000)) > 10) return c.json({ error: "rate_limited" }, 429);
+    if (!(await store.putGateway(principal.uid, { name, url: pipedreamGatewayUrl(slug), tokenSealed: null, auth: "pipedream" }, MAX_GATEWAYS))) return c.json({ error: "too_many" }, 409);
+    await quietly("reference", async () => weaveHarness(principal.uid, principal.login));
+    return c.json({ ok: true, name, status: "configured", accountConnected: false });
   });
 
   app.post("/api/app/gateway", jsonLimit, async (c) => {
@@ -842,6 +870,7 @@ export function createApp(deps: AppDeps): Hono {
     const url = typeof payload.url === "string" ? payload.url.trim() : "";
     const token = typeof payload.token === "string" ? payload.token.trim() : "";
     if (!GATEWAY_NAME.test(name) || !url || url.length > 500 || token.length > 4_000) return c.json({ error: "bad_fields" }, 400);
+    if (name.startsWith("pd-")) return c.json({ error: "reserved_name" }, 400);
     const problem = gatewayUrlProblem(url);
     if (problem) return c.json({ error: "bad_url", message: problem }, 400);
     if ((await store.hit(`gateway-add:${principal.uid}`, 60_000)) > 10) return c.json({ error: "rate_limited" }, 429);

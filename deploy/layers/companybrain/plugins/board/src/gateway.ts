@@ -182,14 +182,14 @@ export function gatewayOAuthProvider(opts: {
   };
 }
 
-export async function openUpstream(opts: { url: string; sealedToken: string | null; secret: string; fetch: typeof fetch; authProvider?: OAuthClientProvider }): Promise<Upstream> {
+export async function openUpstream(opts: { url: string; sealedToken: string | null; secret: string; fetch: typeof fetch; authProvider?: OAuthClientProvider; headers?: Record<string, string> }): Promise<Upstream> {
   const problem = gatewayUrlProblem(opts.url);
   if (problem) throw new Error(problem);
   const token = opts.sealedToken ? unseal(opts.secret, SECRET_PURPOSE, opts.sealedToken) : null;
   const transport = new StreamableHTTPClientTransport(new URL(opts.url), {
     fetch: guardedFetch(opts.fetch),
     ...(opts.authProvider ? { authProvider: opts.authProvider } : {}),
-    requestInit: typeof token === "string" && token ? { headers: { authorization: `Bearer ${token}` } } : undefined,
+    requestInit: opts.headers ? { headers: opts.headers } : typeof token === "string" && token ? { headers: { authorization: `Bearer ${token}` } } : undefined,
   });
   const client = new Client({ name: "companybrain-gateway", version: "1.0.0" });
   await client.connect(transport, { timeout: CALL_TIMEOUT_MS });

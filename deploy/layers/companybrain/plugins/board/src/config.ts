@@ -12,6 +12,7 @@ export interface Config {
   agentTokenTtlMs: number;
   sessionTtlMs: number;
   requestsPerMinute: number;
+  pipedream?: { clientId: string; clientSecret: string; projectId: string; environment: "development" | "production" };
 }
 
 const DAY_MS = 86_400_000;
@@ -38,8 +39,14 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
   const publicUrl = (env.PUBLIC_URL ?? `http://localhost:${port}`).replace(/\/+$/, "");
   const parsed = new URL(publicUrl);
   if (parsed.protocol !== "https:" && !isLocal(parsed)) throw new Error("PUBLIC_URL must use https outside localhost");
+  const pd = [env.PIPEDREAM_CLIENT_ID, env.PIPEDREAM_CLIENT_SECRET, env.PIPEDREAM_PROJECT_ID];
+  if (pd.some(Boolean) && !pd.every(Boolean)) throw new Error("Pipedream requires client ID, client secret and project ID together");
+  if (pd.every(Boolean) && !/^proj_[A-Za-z0-9_-]+$/.test(pd[2]!)) throw new Error("Invalid Pipedream project ID");
+  const pdEnvironment = env.PIPEDREAM_ENVIRONMENT || "development";
+  if (pdEnvironment !== "development" && pdEnvironment !== "production") throw new Error("Invalid Pipedream environment");
   return {
     port,
+    pipedream: pd.every(Boolean) ? { clientId: pd[0]!, clientSecret: pd[1]!, projectId: pd[2]!, environment: pdEnvironment } : undefined,
     publicUrl,
     secret,
     databaseUrl: env.BOARD_DATABASE_URL || env.DATABASE_URL || undefined,
