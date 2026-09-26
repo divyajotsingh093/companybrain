@@ -4,11 +4,12 @@ import { ApiError, clientName, THEME, get, post, reason, send, when } from "./sh
 import { Directory } from "./directory";
 
 interface GatewayView {
-  servers: Array<{ name: string; url: string; auth: "token" | "oauth"; hasToken: boolean; signedIn: boolean; createdAt: number }>;
+  servers: Array<{ name: string; url: string; auth: "token" | "oauth" | "pipedream"; hasToken: boolean; signedIn: boolean; createdAt: number }>;
   calls: Array<{ at: number; client: string; subject: string | null; ok: boolean }>;
   max: number;
   model: { configured: boolean; summary: { model: string; provider: string; fallback: string | null } | null; dailyLimit: number };
   mcpUrl: string;
+  pipedreamAvailable: boolean;
   now: number;
 }
 
@@ -28,6 +29,7 @@ export function GatewayScreen(): JSX.Element {
   const [name, setName] = useState("");
   const [url, setUrl] = useState("");
   const [token, setToken] = useState("");
+  const [pipedreamApp, setPipedreamApp] = useState("");
   const [saving, setSaving] = useState(false);
   const [notice, setNotice] = useState<{ ok: boolean; text: string } | null>(null);
   const [confirm, setConfirm] = useState<string | null>(null);
@@ -77,6 +79,21 @@ export function GatewayScreen(): JSX.Element {
     }
   };
 
+  const connectPipedream = async (): Promise<void> => {
+    setSaving(true);
+    setNotice(null);
+    try {
+      const done = await post<{ name: string }>("/api/app/gateway/pipedream", { app: pipedreamApp.trim() });
+      setNotice({ ok: true, text: `${done.name} added for development. No outside account is connected yet. A tool may return a Pipedream sign-in link when you first use it.` });
+      setPipedreamApp("");
+      load();
+    } catch (err) {
+      setNotice({ ok: false, text: reason(err) });
+    } finally {
+      setSaving(false);
+    }
+  };
+
   const remove = async (server: string): Promise<void> => {
     try {
       await send(`/api/app/gateway?name=${encodeURIComponent(server)}`, { method: "DELETE" });
@@ -114,7 +131,7 @@ export function GatewayScreen(): JSX.Element {
               <ListItem
                 key={s.name}
                 title={s.name}
-                subtitle={`${s.url} · ${s.auth === "oauth" ? (s.signedIn ? "signed in" : "sign-in needed") : s.hasToken ? "token stored" : "no token"} · added ${when(s.createdAt, view.now)}`}
+                subtitle={`${s.url} · ${s.auth === "oauth" ? (s.signedIn ? "signed in" : "sign-in needed") : s.auth === "pipedream" ? "Pipedream development: account connection required on first use" : s.hasToken ? "token stored" : "no token"} · added ${when(s.createdAt, view.now)}`}
                 right={
                   confirm === s.name ? (
                     <Stack direction="row" gap={6} align="center">
@@ -168,6 +185,16 @@ export function GatewayScreen(): JSX.Element {
             </Stack>
           </form>
         </Card>
+        {view.pipedreamAvailable ? <Card theme={THEME}>
+          <form onSubmit={(e) => { e.preventDefault(); if (!saving && pipedreamApp.trim()) void connectPipedream(); }}>
+            <Stack gap={12}>
+              <Heading level={5} theme={THEME}>Pipedream Connect (development)</Heading>
+              <Text secondary theme={THEME}>Choose one app. Its tools may include write actions; review them before calling. No outside account is connected by adding it here.</Text>
+              <TextInput label="Pipedream app slug" value={pipedreamApp} placeholder="notion" onChange={setPipedreamApp} theme={THEME} />
+              <Button variant="primary" disabled={saving || !pipedreamApp.trim()} theme={THEME}>Add app</Button>
+            </Stack>
+          </form>
+        </Card> : null}
         {notice ? <AlertBanner variant={notice.ok ? "success" : "danger"} title={notice.text} theme={THEME} /> : null}
       </Stack>
 

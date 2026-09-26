@@ -225,7 +225,7 @@ export interface Post {
 
 const disownMemory = (kind: EntryKind, body: string): string => (kind === "memory" ? body.replace(/^(---\n[\s\S]*?)\nsource: auto(?=\n)/, "$1") : body);
 
-export type GatewayAuth = "token" | "oauth";
+export type GatewayAuth = "token" | "oauth" | "pipedream";
 
 export interface GatewayOAuthRow {
   ownerUid: number;

@@ -153,3 +153,26 @@ npm run typecheck
 ```
 
 Tests run against PGlite, an in-process Postgres. Requires Node 24. PGlite runs one transaction at a time, so lock behaviour is covered by `test/postgres.test.ts`, which runs only with `TEST_DATABASE_URL` set to a real Postgres (it works in a throwaway schema).
+
+## Pipedream Connect development pilot (optional)
+
+Pipedream's hosted developer MCP needs a Connect project and OAuth client credentials.
+Set `PIPEDREAM_CLIENT_ID`, `PIPEDREAM_CLIENT_SECRET`, `PIPEDREAM_PROJECT_ID` and
+`PIPEDREAM_ENVIRONMENT=development` in a preview/development deployment. Never
+commit the secret or expose it to the browser. Partial configuration is refused.
+The production environment is deliberately not enabled by this pilot.
+
+A signed-in person may add one Pipedream app slug in Gateway. The resulting
+`pd-<slug>` gateway uses that person's internal user ID as Pipedream's external
+user ID. Server-side code gets a short-lived developer token and supplies the
+required project, environment, user and app headers to Pipedream's MCP server.
+Adding a slug does **not** authorize that person's third-party app account; a
+tool may return a Pipedream Connect Link when it needs authorization. Tools may
+write or delete on connected third-party accounts, so review the specific tool
+before use. Do not add a production account or run actions during this pilot.
+This integration is not a background data sync or ACL-aware knowledge ingestion.
+
+Before rollout, test the first app's Connect Link with a real test user, verify
+revocation and cross-user separation, inspect the Gateway UI in the preview,
+and review Pipedream's production pricing and data handling. The automated tests
+use a fake MCP server and cannot establish real end-to-end provider auth.
